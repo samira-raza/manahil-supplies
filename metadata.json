@@ -1,0 +1,7 @@
+{
+  "name": "Manahil Supplies",
+  "description": "A comprehensive packaging and carton business management system with advanced order tracking, vendor management, and AI-powered business insights.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
