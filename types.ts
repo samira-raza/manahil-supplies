@@ -143,8 +143,9 @@ export interface Payment {
   vendorId: string;
   amount: number;
   date: string;
-  method?: 'cash' | 'bank' | 'adjustment';
+  method?: 'cash' | 'bank' | 'invoice' | 'adjustment';
   bankAccount?: string;
+  invoiceNumber?: string;
   reference?: string;
   note?: string;
 }

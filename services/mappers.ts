@@ -119,6 +119,7 @@ export const paymentFromDb = (row: any): Payment => ({
   date: row.date,
   method: row.method || undefined,
   bankAccount: row.bank_account || undefined,
+  invoiceNumber: row.invoice_number || undefined,
   reference: row.reference,
   note: row.note,
 });
@@ -130,6 +131,7 @@ export const paymentToDb = (p: Payment) => ({
   date: p.date,
   method: p.method || null,
   bank_account: p.bankAccount || null,
+  invoice_number: p.invoiceNumber || null,
   reference: p.reference || null,
   note: p.note || null,
 });

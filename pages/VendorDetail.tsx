@@ -20,8 +20,9 @@ const VendorDetail: React.FC = () => {
 
   const [paymentForm, setPaymentForm] = useState({
     amount: '',
-    method: 'cash' as 'cash' | 'bank',
+    method: 'cash' as 'cash' | 'bank' | 'invoice',
     bankAccount: '',
+    invoiceNumber: '',
     reference: '',
     note: ''
   });
@@ -136,13 +137,14 @@ const VendorDetail: React.FC = () => {
       date: new Date().toISOString().split('T')[0],
       method: paymentForm.method,
       bankAccount: paymentForm.method === 'bank' ? paymentForm.bankAccount : undefined,
+      invoiceNumber: paymentForm.method === 'invoice' ? paymentForm.invoiceNumber : undefined,
       reference: paymentForm.reference,
       note: paymentForm.note
     };
     await db.insertPayment(newPayment);
     setPayments(prev => [...prev, newPayment]);
     setShowPaymentModal(false);
-    setPaymentForm({ amount: '', method: 'cash', bankAccount: '', reference: '', note: '' });
+    setPaymentForm({ amount: '', method: 'cash', bankAccount: '', invoiceNumber: '', reference: '', note: '' });
   };
 
   const handleRecordAdjustment = async (e: React.FormEvent) => {
@@ -366,11 +368,14 @@ const VendorDetail: React.FC = () => {
                       <span className="text-[9px] md:text-[10px] font-black px-2 py-0.5 rounded uppercase bg-amber-100 text-amber-700">Adjustment</span>
                     ) : (
                       <>
-                        <span className={`text-[9px] md:text-[10px] font-black px-2 py-0.5 rounded uppercase ${p.method === 'bank' ? 'bg-indigo-100 text-indigo-700' : 'bg-slate-100 text-slate-600'}`}>
-                          {p.method === 'bank' ? 'Bank' : 'Cash'}
+                        <span className={`text-[9px] md:text-[10px] font-black px-2 py-0.5 rounded uppercase ${p.method === 'bank' ? 'bg-indigo-100 text-indigo-700' : p.method === 'invoice' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+                          {p.method === 'bank' ? 'Bank' : p.method === 'invoice' ? 'Invoice' : 'Cash'}
                         </span>
                         {p.method === 'bank' && p.bankAccount && (
                           <div className="text-[9px] md:text-[10px] text-slate-400 font-bold mt-1 truncate max-w-[150px]">{p.bankAccount}</div>
+                        )}
+                        {p.method === 'invoice' && p.invoiceNumber && (
+                          <div className="text-[9px] md:text-[10px] text-slate-400 font-bold mt-1 truncate max-w-[150px]">{p.invoiceNumber}</div>
                         )}
                       </>
                     )}
@@ -401,7 +406,7 @@ const VendorDetail: React.FC = () => {
                   <h2 className="text-lg md:text-xl font-black">Post Payment</h2>
                   <p className="text-[9px] md:text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-widest">{vendor.name}</p>
                 </div>
-                <button onClick={() => { setShowPaymentModal(false); setPaymentForm({ amount: '', method: 'cash', bankAccount: '', reference: '', note: '' }); }} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
+                <button onClick={() => { setShowPaymentModal(false); setPaymentForm({ amount: '', method: 'cash', bankAccount: '', invoiceNumber: '', reference: '', note: '' }); }} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
                   <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                 </button>
               </div>
@@ -412,9 +417,10 @@ const VendorDetail: React.FC = () => {
                 </div>
                 <div>
                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Payment Method*</label>
-                  <select value={paymentForm.method} onChange={(e) => setPaymentForm({...paymentForm, method: e.target.value as 'cash' | 'bank', bankAccount: ''})} className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none font-bold text-sm">
+                  <select value={paymentForm.method} onChange={(e) => setPaymentForm({...paymentForm, method: e.target.value as 'cash' | 'bank' | 'invoice', bankAccount: '', invoiceNumber: ''})} className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none font-bold text-sm">
                     <option value="cash">Cash</option>
                     <option value="bank">Bank Transfer</option>
+                    <option value="invoice">Invoice</option>
                   </select>
                 </div>
                 {paymentForm.method === 'bank' && (
@@ -432,11 +438,17 @@ const VendorDetail: React.FC = () => {
                     )}
                   </div>
                 )}
+                {paymentForm.method === 'invoice' && (
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Invoice Number*</label>
+                    <input type="text" value={paymentForm.invoiceNumber} onChange={(e) => setPaymentForm({...paymentForm, invoiceNumber: e.target.value})} className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none font-bold text-sm" placeholder="e.g. INV-2024-001" required />
+                  </div>
+                )}
                 <div>
                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Reference / Note</label>
                   <input type="text" value={paymentForm.reference} onChange={(e) => setPaymentForm({...paymentForm, reference: e.target.value})} className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none font-bold text-sm" placeholder="e.g. Cheque #1234" />
                 </div>
-                <button type="submit" disabled={paymentForm.method === 'bank' && (!paymentForm.bankAccount || vendorBanks.length === 0)} className="w-full py-4 md:py-5 bg-indigo-600 text-white rounded-xl md:rounded-[24px] font-black text-base md:text-lg shadow-xl hover:bg-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed">Record Transaction</button>
+                <button type="submit" disabled={(paymentForm.method === 'bank' && (!paymentForm.bankAccount || vendorBanks.length === 0)) || (paymentForm.method === 'invoice' && !paymentForm.invoiceNumber)} className="w-full py-4 md:py-5 bg-indigo-600 text-white rounded-xl md:rounded-[24px] font-black text-base md:text-lg shadow-xl hover:bg-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed">Record Transaction</button>
               </form>
             </div>
           </div>
@@ -527,13 +539,13 @@ const EditPaymentModal: React.FC<{
   payment: Payment; vendorBanks: BankAccount[]; vendorName: string; onClose: () => void; onSave: (updated: Payment) => void;
 }> = ({ payment, vendorBanks, vendorName, onClose, onSave }) => {
   const [formData, setFormData] = useState({
-    amount: payment.amount.toString(), method: (payment.method || 'cash') as 'cash' | 'bank',
-    bankAccount: payment.bankAccount || '', reference: payment.reference || '', note: payment.note || '', date: payment.date,
+    amount: payment.amount.toString(), method: (payment.method || 'cash') as 'cash' | 'bank' | 'invoice',
+    bankAccount: payment.bankAccount || '', invoiceNumber: payment.invoiceNumber || '', reference: payment.reference || '', note: payment.note || '', date: payment.date,
   });
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formData.amount) return;
-    onSave({ ...payment, amount: parseFloat(formData.amount), method: formData.method, bankAccount: formData.method === 'bank' ? formData.bankAccount : undefined, reference: formData.reference, note: formData.note, date: formData.date });
+    onSave({ ...payment, amount: parseFloat(formData.amount), method: formData.method, bankAccount: formData.method === 'bank' ? formData.bankAccount : undefined, invoiceNumber: formData.method === 'invoice' ? formData.invoiceNumber : undefined, reference: formData.reference, note: formData.note, date: formData.date });
   };
   return (
     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-2 md:p-4">
@@ -545,12 +557,13 @@ const EditPaymentModal: React.FC<{
         <form onSubmit={handleSubmit} className="p-4 md:p-8 space-y-4 md:space-y-6 overflow-y-auto flex-1">
           <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Date*</label><input type="date" value={formData.date} onChange={(e) => setFormData({...formData, date: e.target.value})} className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none font-bold text-sm" required /></div>
           <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Amount (PKR)*</label><input type="number" step="0.01" value={formData.amount} onChange={(e) => setFormData({...formData, amount: e.target.value})} className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none font-bold text-base md:text-lg" required /></div>
-          <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Payment Method*</label><select value={formData.method} onChange={(e) => setFormData({...formData, method: e.target.value as 'cash' | 'bank', bankAccount: ''})} className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none font-bold text-sm"><option value="cash">Cash</option><option value="bank">Bank Transfer</option></select></div>
+          <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Payment Method*</label><select value={formData.method} onChange={(e) => setFormData({...formData, method: e.target.value as 'cash' | 'bank' | 'invoice', bankAccount: '', invoiceNumber: ''})} className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none font-bold text-sm"><option value="cash">Cash</option><option value="bank">Bank Transfer</option><option value="invoice">Invoice</option></select></div>
           {formData.method === 'bank' && <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Bank Account*</label>{vendorBanks.length > 0 ? <select value={formData.bankAccount} onChange={(e) => setFormData({...formData, bankAccount: e.target.value})} className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none font-bold text-sm" required><option value="">-- Select --</option>{vendorBanks.map((b, i) => <option key={i} value={`${b.bankTitle} - ${b.accountNumber}`}>{b.bankTitle} - {b.accountTitle} ({b.accountNumber})</option>)}</select> : <div className="px-4 py-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-xs font-bold">No bank accounts found.</div>}</div>}
+          {formData.method === 'invoice' && <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Invoice Number*</label><input type="text" value={formData.invoiceNumber} onChange={(e) => setFormData({...formData, invoiceNumber: e.target.value})} className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none font-bold text-sm" placeholder="e.g. INV-2024-001" required /></div>}
           <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Reference / Note</label><input type="text" value={formData.reference} onChange={(e) => setFormData({...formData, reference: e.target.value})} className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none font-bold text-sm" placeholder="e.g. Cheque #1234" /></div>
           <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 md:gap-4 pt-4 md:pt-6 border-t border-slate-100">
             <button type="button" onClick={onClose} className="px-6 md:px-8 py-3 md:py-4 rounded-xl md:rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors uppercase tracking-widest text-[10px]">Cancel</button>
-            <button type="submit" disabled={formData.method === 'bank' && (!formData.bankAccount || vendorBanks.length === 0)} className="px-8 md:px-12 py-3 md:py-4 rounded-xl md:rounded-2xl font-black text-white bg-indigo-600 hover:bg-indigo-700 shadow-xl shadow-indigo-100 transition-all uppercase tracking-widest text-[10px] disabled:opacity-50 disabled:cursor-not-allowed">Save Changes</button>
+            <button type="submit" disabled={(formData.method === 'bank' && (!formData.bankAccount || vendorBanks.length === 0)) || (formData.method === 'invoice' && !formData.invoiceNumber)} className="px-8 md:px-12 py-3 md:py-4 rounded-xl md:rounded-2xl font-black text-white bg-indigo-600 hover:bg-indigo-700 shadow-xl shadow-indigo-100 transition-all uppercase tracking-widest text-[10px] disabled:opacity-50 disabled:cursor-not-allowed">Save Changes</button>
           </div>
         </form>
       </div>
