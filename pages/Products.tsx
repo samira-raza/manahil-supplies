@@ -117,7 +117,7 @@ const Products: React.FC = () => {
       secondaryPrice: formData.secondaryPrice ? parseFloat(formData.secondaryPrice) : 0,
       priceHistory: newPriceHistory,
       dateAdded: today,
-      relatedProductId: formData.relatedProductId || undefined,
+      relatedProductIds: formData.relatedProductId ? [formData.relatedProductId] : [],
     };
 
     await db.upsertProduct(newProduct);
@@ -345,7 +345,7 @@ const Products: React.FC = () => {
                                     <div className="flex justify-between items-center">
                                        <span className="text-xs font-bold text-slate-500">Linked Product:</span>
                                        <span className="text-sm font-black text-indigo-600">
-                                          {p.relatedProductId ? products.find(prod => prod.id === p.relatedProductId)?.itemName : 'None'}
+                                          {p.relatedProductIds && p.relatedProductIds.length > 0 ? p.relatedProductIds.map(rid => products.find(prod => prod.id === rid)?.itemName).filter(Boolean).join(', ') : 'None'}
                                        </span>
                                     </div>
                                  </div>

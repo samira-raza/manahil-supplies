@@ -1,17 +1,29 @@
 
-import React, { useContext, useMemo, useState } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
-import { CRMContext } from '../App';
+import React, { useContext, useEffect, useMemo, useState } from 'react';
+import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
+import { CRMContext, generateId } from '../App';
 import { Icons } from '../constants';
 import { PriceRecord } from '../types';
+import { db } from '../services/db';
 
 const ProductDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const ctx = useContext(CRMContext);
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [showMetadataModal, setShowMetadataModal] = useState(false);
+  const [metadataRequireChange, setMetadataRequireChange] = useState(false);
   const [showPricingModal, setShowPricingModal] = useState(false);
+  const [duplicating, setDuplicating] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('edit') === '1') {
+      setMetadataRequireChange(true);
+      setShowMetadataModal(true);
+    }
+  }, [id, location.search]);
 
   if (!ctx || !id) return null;
   const { products, setProducts, vendors, deliveries, orders, measuringUnits } = ctx;
@@ -26,9 +38,25 @@ const ProductDetail: React.FC = () => {
     );
   }
 
+  const handleDuplicate = async () => {
+    setDuplicating(true);
+    const today = new Date().toISOString().split('T')[0];
+    const copy = {
+      ...product,
+      id: generateId(),
+      description: product.description ? `${product.description} [COPY]` : '[COPY]',
+      dateAdded: today,
+      priceHistory: { ...product.priceHistory },
+    };
+    await db.upsertProduct(copy);
+    setProducts(prev => [copy, ...prev]);
+    setDuplicating(false);
+    navigate(`/products/${copy.id}?edit=1`);
+  };
+
   const primaryVendor = vendors.find(s => s.id === product.primaryVendorId);
   const secondaryVendor = vendors.find(s => s.id === product.secondaryVendorId);
-  const relatedProduct = products.find(p => p.id === product.relatedProductId);
+  const relatedProducts = (product.relatedProductIds || []).map((rid: string) => products.find(p => p.id === rid)).filter(Boolean);
 
   // Get last 10 deliveries
   const lastDeliveries = useMemo(() => {
@@ -51,7 +79,10 @@ const ProductDetail: React.FC = () => {
           </div>
         </div>
         <div className="flex gap-2 md:gap-3">
-          <button onClick={() => setShowMetadataModal(true)} className="flex-1 md:flex-none px-4 md:px-5 py-2.5 md:py-3 bg-white border border-slate-200 rounded-xl font-semibold text-slate-600 hover:bg-slate-50 transition-all shadow-sm text-sm">Edit Info</button>
+          <button onClick={handleDuplicate} disabled={duplicating} className="flex-1 md:flex-none px-4 md:px-5 py-2.5 md:py-3 bg-white border border-slate-200 rounded-xl font-semibold text-slate-600 hover:bg-amber-50 hover:border-amber-300 hover:text-amber-600 transition-all shadow-sm text-sm disabled:opacity-50">
+            {duplicating ? 'Duplicating...' : 'Duplicate'}
+          </button>
+          <button onClick={() => { setMetadataRequireChange(false); setShowMetadataModal(true); }} className="flex-1 md:flex-none px-4 md:px-5 py-2.5 md:py-3 bg-white border border-slate-200 rounded-xl font-semibold text-slate-600 hover:bg-slate-50 transition-all shadow-sm text-sm">Edit Info</button>
           <button onClick={() => setShowPricingModal(true)} className="flex-1 md:flex-none px-4 md:px-5 py-2.5 md:py-3 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 text-sm">Update Price</button>
         </div>
       </div>
@@ -63,16 +94,17 @@ const ProductDetail: React.FC = () => {
           {/* Linked Product Card */}
           <div className="bg-white p-5 md:p-8 rounded-2xl md:rounded-[32px] border border-slate-200 shadow-sm">
             <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 md:mb-6">Linked Product Family</h3>
-            {relatedProduct ? (
-              <div className="group relative bg-slate-50 p-4 md:p-6 rounded-2xl md:rounded-[24px] border border-slate-100 hover:border-indigo-300 transition-all">
-                <div className="text-sm font-black text-slate-900 mb-1 break-words">{relatedProduct.title}</div>
-                <div className="text-[10px] text-indigo-600 font-bold uppercase mb-3 md:mb-4">{relatedProduct.category}</div>
-                <Link
-                  to={`/products/${relatedProduct.id}`}
-                  className="inline-flex items-center gap-2 text-xs font-black text-indigo-600 hover:underline"
-                >
-                  View Linked Profile <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M9 5l7 7-7 7" strokeWidth={2}/></svg>
-                </Link>
+            {relatedProducts.length > 0 ? (
+              <div className="space-y-3">
+                {relatedProducts.map((rp: any) => (
+                  <div key={rp.id} className="group relative bg-slate-50 p-4 md:p-5 rounded-2xl border border-slate-100 hover:border-indigo-300 transition-all">
+                    <div className="text-sm font-black text-slate-900 mb-1 break-words">{rp.title}</div>
+                    <div className="text-[10px] text-indigo-600 font-bold uppercase mb-2">{rp.category}</div>
+                    <Link to={`/products/${rp.id}`} className="inline-flex items-center gap-2 text-xs font-black text-indigo-600 hover:underline">
+                      View Profile <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M9 5l7 7-7 7" strokeWidth={2}/></svg>
+                    </Link>
+                  </div>
+                ))}
               </div>
             ) : (
               <div className="py-4 md:py-6 px-4 bg-slate-50 rounded-2xl md:rounded-3xl border-2 border-dashed border-slate-200 text-center text-slate-400 text-xs italic">
@@ -229,10 +261,14 @@ const ProductDetail: React.FC = () => {
           categories={ctx.categories}
           measuringUnits={measuringUnits}
           products={products}
-          onClose={() => setShowMetadataModal(false)}
-          onSave={(updates) => {
-            setProducts(prev => prev.map(p => p.id === id ? { ...p, ...updates } : p));
+          requireChange={metadataRequireChange}
+          onClose={() => { setShowMetadataModal(false); setMetadataRequireChange(false); }}
+          onSave={async (updates) => {
+            const updated = { ...product, ...updates };
+            await db.upsertProduct(updated);
+            setProducts(prev => prev.map(p => p.id === id ? updated : p));
             setShowMetadataModal(false);
+            setMetadataRequireChange(false);
           }}
         />
       )}
@@ -274,7 +310,9 @@ const MetadataModal: React.FC<{
   products: any[];
   onClose: () => void;
   onSave: (updates: any) => void;
-}> = ({ product, categories, measuringUnits, products, onClose, onSave }) => {
+  requireChange?: boolean;
+}> = ({ product, categories, measuringUnits, products, onClose, onSave, requireChange = false }) => {
+  const initialRelatedIds: string[] = product.relatedProductIds || [];
   const [formData, setFormData] = useState({
     brand: product.brand,
     category: product.category,
@@ -283,21 +321,41 @@ const MetadataModal: React.FC<{
     unitSize: product.unitSize,
     measuringUnit: product.measuringUnit || '',
     packing: product.packing,
-    relatedProductId: product.relatedProductId || '',
   });
+  const [relatedIds, setRelatedIds] = useState<string[]>(initialRelatedIds);
 
   const generatedTitle = useMemo(() => {
     return [formData.category, formData.brand, formData.itemName, formData.packing].filter(Boolean).join(' ');
   }, [formData]);
+
+  const isDirty = useMemo(() => {
+    if (!requireChange) return true;
+    const fieldChanged = (
+      formData.brand !== product.brand ||
+      formData.category !== product.category ||
+      formData.itemName !== product.itemName ||
+      formData.description !== (product.description || '') ||
+      formData.unitSize !== product.unitSize ||
+      formData.measuringUnit !== (product.measuringUnit || '') ||
+      formData.packing !== product.packing
+    );
+    const relatedChanged = JSON.stringify([...relatedIds].sort()) !== JSON.stringify([...initialRelatedIds].sort());
+    return fieldChanged || relatedChanged;
+  }, [formData, relatedIds]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
+  const toggleRelated = (id: string) => {
+    setRelatedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSave({ ...formData, title: generatedTitle });
+    if (!isDirty) return;
+    onSave({ ...formData, title: generatedTitle, relatedProductIds: relatedIds });
   };
 
   return (
@@ -357,10 +415,25 @@ const MetadataModal: React.FC<{
               <input name="packing" value={formData.packing} onChange={handleChange} type="text" className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm" required />
             </div>
             <div className="md:col-span-2">
-              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Linked Product</label>
-              <select name="relatedProductId" value={formData.relatedProductId} onChange={handleChange} className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm">
-                <option value="">No link</option>
-                {products.filter(p => p.id !== product.id).map(prod => (
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Linked Products</label>
+              {relatedIds.length > 0 && (
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {relatedIds.map(rid => {
+                    const prod = products.find(p => p.id === rid);
+                    return prod ? (
+                      <span key={rid} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold">
+                        {prod.title}
+                        <button type="button" onClick={() => toggleRelated(rid)} className="hover:text-red-500 transition-colors">
+                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                        </button>
+                      </span>
+                    ) : null;
+                  })}
+                </div>
+              )}
+              <select onChange={e => { if (e.target.value) toggleRelated(e.target.value); e.target.value = ''; }} className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm" defaultValue="">
+                <option value="">+ Add linked product</option>
+                {products.filter(p => p.id !== product.id && !relatedIds.includes(p.id)).map(prod => (
                   <option key={prod.id} value={prod.id}>{prod.title}</option>
                 ))}
               </select>
@@ -369,7 +442,7 @@ const MetadataModal: React.FC<{
 
           <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 md:gap-4 pt-4 md:pt-6 border-t border-slate-100">
             <button type="button" onClick={onClose} className="px-6 md:px-8 py-3 md:py-4 rounded-xl md:rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors uppercase tracking-widest text-[10px]">Cancel</button>
-            <button type="submit" className="px-8 md:px-12 py-3 md:py-4 rounded-xl md:rounded-2xl font-black text-white bg-indigo-600 hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 uppercase tracking-widest text-[10px]">Save Changes</button>
+            <button type="submit" disabled={!isDirty} className="px-8 md:px-12 py-3 md:py-4 rounded-xl md:rounded-2xl font-black text-white bg-indigo-600 hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 uppercase tracking-widest text-[10px] disabled:opacity-40 disabled:cursor-not-allowed disabled:shadow-none">Save Changes</button>
           </div>
         </form>
       </div>

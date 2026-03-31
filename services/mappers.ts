@@ -38,7 +38,12 @@ export const productFromDb = (row: any): Product => ({
   priceHistory: row.price_history || {},
   measuringUnit: row.measuring_unit || '',
   dateAdded: row.date_added,
-  relatedProductId: row.related_product_id,
+  relatedProductIds: (() => {
+    const v = row.related_product_id;
+    if (!v) return [];
+    if (Array.isArray(v)) return v;
+    try { const p = JSON.parse(v); return Array.isArray(p) ? p : [v]; } catch { return [v]; }
+  })(),
 });
 
 export const productToDb = (p: Product) => ({
@@ -57,7 +62,7 @@ export const productToDb = (p: Product) => ({
   price_history: p.priceHistory,
   measuring_unit: p.measuringUnit || null,
   date_added: p.dateAdded,
-  related_product_id: p.relatedProductId || null,
+  related_product_id: p.relatedProductIds && p.relatedProductIds.length > 0 ? JSON.stringify(p.relatedProductIds) : null,
 });
 
 // ---- Order ----

@@ -93,7 +93,7 @@ export interface Product {
   priceHistory: Record<string, PriceRecord[]>;
   measuringUnit?: string;
   dateAdded: string;
-  relatedProductId?: string;
+  relatedProductIds?: string[];
 }
 
 export interface OrderItem {
