@@ -39,6 +39,8 @@ export interface User {
   password: string;
   role: UserRole;
   vendorId?: string;
+  allowedVendorIds?: string[];
+  isActive?: boolean;
   mustResetPassword?: boolean;
 }
 

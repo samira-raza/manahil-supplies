@@ -19,6 +19,9 @@ const UserManagement: React.FC = () => {
   const [newUserMobile, setNewUserMobile] = useState('');
   const [newUserRole, setNewUserRole] = useState<UserRole | ''>('');
   const [newUserVendorId, setNewUserVendorId] = useState('');
+  const [newUserAllowedVendorIds, setNewUserAllowedVendorIds] = useState<string[]>([]);
+  const [vendorSelectKey, setVendorSelectKey] = useState(0);
+  const [viewingUser, setViewingUser] = useState<User | null>(null);
   const [createdCredentials, setCreatedCredentials] = useState<{ name: string; mobile: string; password: string } | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -96,6 +99,12 @@ const UserManagement: React.FC = () => {
       return;
     }
 
+    // Validate vendor selection for admin role
+    if (effectiveRole === UserRole.ADMIN && newUserAllowedVendorIds.length === 0) {
+      alert('Please select at least one vendor for this Admin account');
+      return;
+    }
+
     const tempPassword = generatePassword();
 
     const newUser: User = {
@@ -105,6 +114,7 @@ const UserManagement: React.FC = () => {
       password: tempPassword,
       role: effectiveRole,
       vendorId: isVendor ? currentUser?.vendorId : newUserVendorId || undefined,
+      allowedVendorIds: effectiveRole === UserRole.ADMIN ? newUserAllowedVendorIds : undefined,
       mustResetPassword: true
     };
 
@@ -119,6 +129,7 @@ const UserManagement: React.FC = () => {
     setNewUserMobile('');
     setNewUserRole('');
     setNewUserVendorId('');
+    setNewUserAllowedVendorIds([]);
     setShowAddModal(false);
   };
 
@@ -192,11 +203,11 @@ const UserManagement: React.FC = () => {
                 )}
                 <div className="flex justify-between text-sm">
                   <span className="text-slate-500">Status</span>
-                  <span className="text-emerald-500 font-bold">● Active</span>
+                  <span className={`font-bold ${user.isActive !== false ? 'text-emerald-500' : 'text-red-400'}`}>● {user.isActive !== false ? 'Active' : 'Disabled'}</span>
                 </div>
               </div>
               <div className="flex gap-2">
-                <button className="flex-1 py-2 bg-slate-50 hover:bg-slate-100 rounded-lg text-xs font-bold transition-colors">View Details</button>
+                <button onClick={() => setViewingUser(user)} className="flex-1 py-2 bg-slate-50 hover:bg-slate-100 rounded-lg text-xs font-bold transition-colors">View Details</button>
                 {(isSuperAdmin || (isAdmin && user.role !== UserRole.SUPER_ADMIN && user.role !== UserRole.ADMIN)) && (
                   <button className="px-3 py-2 bg-slate-50 hover:bg-red-50 hover:text-red-500 rounded-lg text-xs transition-colors"><Icons.Logout /></button>
                 )}
@@ -253,7 +264,7 @@ const UserManagement: React.FC = () => {
                     <label className="block text-sm font-medium text-slate-700 mb-2">Role</label>
                     <select
                       value={newUserRole}
-                      onChange={(e) => setNewUserRole(e.target.value as UserRole)}
+                      onChange={(e) => { setNewUserRole(e.target.value as UserRole); setNewUserAllowedVendorIds([]); setNewUserVendorId(''); setVendorSelectKey(k => k + 1); }}
                       className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
                     >
                       <option value="">Select a role</option>
@@ -261,6 +272,46 @@ const UserManagement: React.FC = () => {
                         <option key={role.value} value={role.value}>{role.label}</option>
                       ))}
                     </select>
+                  </div>
+                )}
+
+                {newUserRole === UserRole.ADMIN && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-2">Allowed Vendors*</label>
+                    {newUserAllowedVendorIds.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mb-3">
+                        {newUserAllowedVendorIds.map(vid => {
+                          const v = vendors.find(s => s.id === vid);
+                          return v ? (
+                            <span key={vid} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold">
+                              {v.name}
+                              <button type="button" onClick={() => setNewUserAllowedVendorIds(prev => prev.filter(x => x !== vid))} className="hover:text-red-500 transition-colors">
+                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                              </button>
+                            </span>
+                          ) : null;
+                        })}
+                      </div>
+                    )}
+                    <select
+                      key={vendorSelectKey}
+                      value=""
+                      onChange={(e) => {
+                        if (e.target.value && !newUserAllowedVendorIds.includes(e.target.value)) {
+                          setNewUserAllowedVendorIds(prev => [...prev, e.target.value]);
+                          setVendorSelectKey(k => k + 1);
+                        }
+                      }}
+                      className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
+                    >
+                      <option value="">+ Add vendor access</option>
+                      {vendors.filter(v => !newUserAllowedVendorIds.includes(v.id)).map(v => (
+                        <option key={v.id} value={v.id}>{v.name}</option>
+                      ))}
+                    </select>
+                    {newUserAllowedVendorIds.length === 0 && (
+                      <p className="text-xs text-red-500 mt-1">At least one vendor must be selected</p>
+                    )}
                   </div>
                 )}
 
@@ -369,6 +420,124 @@ const UserManagement: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* View Details Modal */}
+      {viewingUser && (
+        <UserDetailsModal
+          user={viewingUser}
+          vendors={vendors}
+          currentUser={currentUser}
+          getRoleBadgeColor={getRoleBadgeColor}
+          formatRoleName={formatRoleName}
+          onClose={() => setViewingUser(null)}
+          onToggleActive={async (updatedUser) => {
+            await db.upsertUser(updatedUser);
+            setUsers(prev => prev.map(u => u.id === updatedUser.id ? updatedUser : u));
+            setViewingUser(updatedUser);
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+const UserDetailsModal: React.FC<{
+  user: User;
+  vendors: any[];
+  currentUser: User | null;
+  getRoleBadgeColor: (role: UserRole) => string;
+  formatRoleName: (role: UserRole) => string;
+  onClose: () => void;
+  onToggleActive: (updated: User) => void;
+}> = ({ user, vendors, currentUser, getRoleBadgeColor, formatRoleName, onClose, onToggleActive }) => {
+  const userVendor = vendors.find(v => v.id === user.vendorId);
+  const allowedVendors = (user.allowedVendorIds || []).map(id => vendors.find(v => v.id === id)).filter(Boolean);
+  const isActive = user.isActive !== false;
+  const isSelf = currentUser?.id === user.id;
+  const canToggle = !isSelf && currentUser?.role === UserRole.SUPER_ADMIN;
+
+  return (
+    <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-2 md:p-4">
+      <div className="bg-white rounded-2xl md:rounded-3xl w-full max-w-md shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+        <div className="p-4 md:p-6 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-lg ${isActive ? 'bg-slate-100 text-slate-500' : 'bg-red-100 text-red-400'}`}>
+              {user.name[0]}
+            </div>
+            <div>
+              <h2 className="text-lg font-black text-slate-900">{user.name}</h2>
+              <span className={`inline-block px-2 py-0.5 rounded text-[10px] font-bold uppercase ${getRoleBadgeColor(user.role)}`}>
+                {formatRoleName(user.role)}
+              </span>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-slate-200 rounded-xl transition-colors">
+            <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+          </button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div className="bg-slate-50 rounded-2xl p-5 space-y-3 border border-slate-100">
+            <div className="flex justify-between items-center">
+              <span className="text-sm text-slate-500">Mobile / Login ID</span>
+              <span className="font-bold text-slate-900 font-mono">{user.mobile}</span>
+            </div>
+            <div className="border-t border-slate-200"></div>
+            <div className="flex justify-between items-center">
+              <span className="text-sm text-slate-500">Role</span>
+              <span className="font-bold text-slate-900">{formatRoleName(user.role)}</span>
+            </div>
+            <div className="border-t border-slate-200"></div>
+            <div className="flex justify-between items-center">
+              <span className="text-sm text-slate-500">Status</span>
+              <div className="flex items-center gap-3">
+                <span className={`font-bold text-sm ${isActive ? 'text-emerald-500' : 'text-red-400'}`}>
+                  ● {isActive ? 'Active' : 'Disabled'}
+                </span>
+                {canToggle && (
+                  <button
+                    onClick={() => onToggleActive({ ...user, isActive: !isActive })}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none ${isActive ? 'bg-emerald-500' : 'bg-slate-300'}`}
+                  >
+                    <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${isActive ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                )}
+                {isSelf && <span className="text-[10px] text-slate-400 italic">Cannot disable own account</span>}
+              </div>
+            </div>
+            {user.mustResetPassword && (
+              <>
+                <div className="border-t border-slate-200"></div>
+                <div className="flex justify-between items-center">
+                  <span className="text-sm text-slate-500">Password</span>
+                  <span className="text-amber-500 font-bold text-xs">Pending Reset</span>
+                </div>
+              </>
+            )}
+          </div>
+
+          {userVendor && (
+            <div className="bg-slate-50 rounded-2xl p-5 border border-slate-100">
+              <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Assigned Vendor</div>
+              <div className="font-bold text-slate-900">{userVendor.name}</div>
+            </div>
+          )}
+
+          {allowedVendors.length > 0 && (
+            <div className="bg-slate-50 rounded-2xl p-5 border border-slate-100">
+              <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Allowed Vendors</div>
+              <div className="flex flex-wrap gap-2">
+                {allowedVendors.map((v: any) => (
+                  <span key={v.id} className="px-3 py-1.5 bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold">{v.name}</span>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <button onClick={onClose} className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all">
+            Close
+          </button>
+        </div>
+      </div>
     </div>
   );
 };

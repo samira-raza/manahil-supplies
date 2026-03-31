@@ -144,6 +144,13 @@ export const userFromDb = (row: any): User => ({
   password: row.password,
   role: row.role,
   vendorId: row.vendor_id,
+  isActive: row.is_active !== false, // default true if null
+  allowedVendorIds: (() => {
+    const v = row.allowed_vendor_ids;
+    if (!v) return [];
+    if (Array.isArray(v)) return v;
+    try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; }
+  })(),
   mustResetPassword: row.must_reset_password ?? false,
 });
 
@@ -154,6 +161,8 @@ export const userToDb = (u: User) => ({
   password: u.password,
   role: u.role,
   vendor_id: u.vendorId || null,
+  is_active: u.isActive !== false,
+  allowed_vendor_ids: u.allowedVendorIds && u.allowedVendorIds.length > 0 ? JSON.stringify(u.allowedVendorIds) : null,
   must_reset_password: u.mustResetPassword ?? false,
 });
 

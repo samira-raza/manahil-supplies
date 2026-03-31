@@ -117,7 +117,11 @@ const useCRMStore = () => {
       const savedUserId = localStorage.getItem('packtrack_current_user_id');
       if (savedUserId && usersData) {
         const found = usersData.find((u: any) => u.id === savedUserId);
-        if (found) setCurrentUser(userFromDb(found));
+        if (found) {
+          const mappedUser = userFromDb(found);
+          if (mappedUser.isActive !== false) setCurrentUser(mappedUser);
+          else localStorage.removeItem('packtrack_current_user_id');
+        }
       }
 
       setLoading(false);
@@ -223,8 +227,13 @@ const useCRMStore = () => {
     alert(`Challan ${challanNumber} generated for ${bucket.length} items.`);
   };
 
+  // Filter vendors for admin users based on their allowedVendorIds
+  const visibleVendors = (currentUser?.role === UserRole.ADMIN && currentUser.allowedVendorIds && currentUser.allowedVendorIds.length > 0)
+    ? vendors.filter(v => currentUser.allowedVendorIds!.includes(v.id))
+    : vendors;
+
   return {
-    currentUser, setCurrentUser, products, setProducts, vendors, setVendors, categories, setCategories,
+    currentUser, setCurrentUser, products, setProducts, vendors: visibleVendors, setVendors, categories, setCategories,
     measuringUnits, setMeasuringUnits,
     orders, setOrders, deliveries, setDeliveries, users, setUsers, payments, setPayments, buyers, setBuyers,
     dispatchBucket, setDispatchBucket, finalizeChallan, recalculateOrderStatuses, loading
@@ -514,6 +523,7 @@ const LoginPage = () => {
     e.preventDefault();
     const user = ctx.users.find(u => u.mobile === mobile && u.password === password);
     if (!user) { alert('Invalid login ID or password'); return; }
+    if (user.isActive === false) { alert('Your account has been disabled. Please contact your administrator.'); return; }
 
     if (user.mustResetPassword) {
       setResetUser(user);
