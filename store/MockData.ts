@@ -58,14 +58,16 @@ export const mockProducts: Product[] = [
     unitSize: '60x40x40 cm',
     packing: 'Bundle of 20',
     title: 'LogiPack MTCN (Master Carton) Heavy Duty 5-Ply Outer 60x40x40 cm Bundle of 20',
-    primaryVendorId: 's_alpha',
-    primaryPrice: 1.25,
-    secondaryVendorId: 's_zenith',
-    secondaryPrice: 1.30,
-    priceHistory: {
-      's_alpha': [{ price: 1.20, date: '2023-12-01' }, { price: 1.25, date: '2024-01-15' }],
-      's_zenith': [{ price: 1.30, date: '2024-01-15' }]
-    },
+    suppliers: [
+      { id: 'ps_1', vendorId: 's_alpha', isMain: true, isActive: true, addedAt: '2023-12-01', prices: [
+        { id: 'pp_1', price: 1.20, effectiveDate: '2023-12-01', createdAt: '2023-12-01' },
+        { id: 'pp_2', price: 1.25, effectiveDate: '2024-01-15', createdAt: '2024-01-15' },
+      ] },
+      { id: 'ps_2', vendorId: 's_zenith', isMain: false, isActive: true, addedAt: '2024-01-15', prices: [
+        { id: 'pp_3', price: 1.30, effectiveDate: '2024-01-15', createdAt: '2024-01-15' },
+      ] },
+    ],
+    activity: [],
     dateAdded: '2024-01-15'
   },
   {
@@ -77,13 +79,12 @@ export const mockProducts: Product[] = [
     unitSize: '15x10x10 cm',
     packing: 'Pack of 100',
     title: 'RetailBox Inner Carton E-Flute Product Case 15x10x10 cm Pack of 100',
-    primaryVendorId: 's_alpha',
-    primaryPrice: 0.15,
-    secondaryVendorId: '',
-    secondaryPrice: 0,
-    priceHistory: {
-      's_alpha': [{ price: 0.15, date: '2024-02-10' }]
-    },
+    suppliers: [
+      { id: 'ps_3', vendorId: 's_alpha', isMain: true, isActive: true, addedAt: '2024-02-10', prices: [
+        { id: 'pp_4', price: 0.15, effectiveDate: '2024-02-10', createdAt: '2024-02-10' },
+      ] },
+    ],
+    activity: [],
     dateAdded: '2024-02-10'
   }
 ];

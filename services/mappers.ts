@@ -1,4 +1,5 @@
-import { Vendor, Product, Order, Delivery, Payment, User, Buyer, Category, MeasuringUnit, ChallanStatus } from '../types';
+import { Vendor, Product, ProductSupplier, ProductPrice, ProductActivity, Order, Delivery, Payment, User, Buyer, Category, MeasuringUnit, ChallanStatus } from '../types';
+import { mainSupplier, activeSuppliers, priceOn, sortPrices } from './pricing';
 
 // ---- Vendor ----
 export const vendorFromDb = (row: any): Vendor => ({
@@ -22,47 +23,145 @@ export const vendorToDb = (v: Vendor) => ({
 });
 
 // ---- Product ----
-export const productFromDb = (row: any): Product => ({
+// Suppliers come from product_suppliers and product_prices. Products not yet moved over
+// fall back to the old primary/secondary columns and price_history.
+const legacySuppliers = (row: any): ProductSupplier[] => {
+  const history = row.price_history || {};
+  const slot = (vendorId: string, price: any, isMain: boolean): ProductSupplier => {
+    const records: any[] = Array.isArray(history[vendorId]) ? history[vendorId] : [];
+    const prices: ProductPrice[] = records.length > 0
+      ? records.map((h, i) => ({
+          id: `pp_${row.id}_${vendorId}_${i}`,
+          price: Number(h.price) || 0,
+          effectiveDate: h.effectiveDate || h.date || row.date_added,
+          note: h.note || undefined,
+          createdAt: `${h.date || row.date_added}T00:00:${String(i).padStart(2, '0')}`,
+        }))
+      : [{ id: `pp_${row.id}_${vendorId}_0`, price: Number(price) || 0, effectiveDate: row.date_added, createdAt: `${row.date_added}T00:00:00` }];
+    return { id: `ps_${row.id}_${vendorId}`, vendorId, isMain, isActive: true, addedAt: row.date_added, prices };
+  };
+  const list: ProductSupplier[] = [];
+  if (row.primary_vendor_id) list.push(slot(row.primary_vendor_id, row.primary_price, true));
+  if (row.secondary_vendor_id && row.secondary_vendor_id !== row.primary_vendor_id) list.push(slot(row.secondary_vendor_id, row.secondary_price, false));
+  return list;
+};
+
+export const productSupplierFromDb = (row: any, priceRows: any[]): ProductSupplier => ({
   id: row.id,
-  title: row.title,
-  brand: row.brand,
-  category: row.category,
-  itemName: row.item_name,
-  description: row.description,
-  unitSize: row.unit_size,
-  packing: row.packing,
-  primaryVendorId: row.primary_vendor_id || '',
-  primaryPrice: Number(row.primary_price),
-  secondaryVendorId: row.secondary_vendor_id || '',
-  secondaryPrice: Number(row.secondary_price),
-  priceHistory: row.price_history || {},
-  measuringUnit: row.measuring_unit || '',
-  dateAdded: row.date_added,
-  relatedProductIds: (() => {
-    const v = row.related_product_id;
-    if (!v) return [];
-    if (Array.isArray(v)) return v;
-    try { const p = JSON.parse(v); return Array.isArray(p) ? p : [v]; } catch { return [v]; }
-  })(),
+  vendorId: row.vendor_id,
+  isMain: !!row.is_main,
+  isActive: row.is_active !== false,
+  addedBy: row.added_by || undefined,
+  addedAt: row.added_at,
+  prices: priceRows
+    .filter(pr => pr.product_id === row.product_id && pr.vendor_id === row.vendor_id)
+    .map(productPriceFromDb),
 });
 
-export const productToDb = (p: Product) => ({
-  id: p.id,
-  title: p.title,
-  brand: p.brand,
-  category: p.category,
-  item_name: p.itemName,
-  description: p.description,
-  unit_size: p.unitSize,
-  packing: p.packing,
-  primary_vendor_id: p.primaryVendorId || null,
-  primary_price: p.primaryPrice,
-  secondary_vendor_id: p.secondaryVendorId || null,
-  secondary_price: p.secondaryPrice,
-  price_history: p.priceHistory,
-  measuring_unit: p.measuringUnit || null,
-  date_added: p.dateAdded,
-  related_product_id: p.relatedProductIds && p.relatedProductIds.length > 0 ? JSON.stringify(p.relatedProductIds) : null,
+export const productPriceFromDb = (row: any): ProductPrice => ({
+  id: row.id,
+  price: Number(row.price) || 0,
+  effectiveDate: row.effective_date,
+  note: row.note || undefined,
+  createdBy: row.created_by || undefined,
+  createdAt: row.created_at,
+});
+
+export const productActivityFromDb = (row: any): ProductActivity => ({
+  id: row.id,
+  productId: row.product_id,
+  type: row.type,
+  details: row.details || '',
+  userId: row.user_id || undefined,
+  userName: row.user_name || undefined,
+  at: row.at,
+});
+
+export const productFromDb = (row: any, supplierRows: any[] = [], priceRows: any[] = [], activityRows: any[] = []): Product => {
+  const own = supplierRows.filter(s => s.product_id === row.id);
+  return {
+    id: row.id,
+    title: row.title,
+    brand: row.brand,
+    category: row.category,
+    itemName: row.item_name,
+    description: row.description,
+    unitSize: row.unit_size,
+    packing: row.packing,
+    suppliers: own.length > 0 ? own.map(s => productSupplierFromDb(s, priceRows)) : legacySuppliers(row),
+    activity: activityRows
+      .filter(a => a.product_id === row.id)
+      .map(productActivityFromDb)
+      .sort((a, b) => b.at.localeCompare(a.at)),
+    measuringUnit: row.measuring_unit || '',
+    dateAdded: row.date_added,
+    relatedProductIds: (() => {
+      const v = row.related_product_id;
+      if (!v) return [];
+      if (Array.isArray(v)) return v;
+      try { const p = JSON.parse(v); return Array.isArray(p) ? p : [v]; } catch { return [v]; }
+    })(),
+  };
+};
+
+// The old primary/secondary columns are still written (main supplier, then the next active one)
+// so older screens and a rollback keep working.
+export const productToDb = (p: Product) => {
+  const main = mainSupplier(p) || activeSuppliers(p)[0];
+  const second = activeSuppliers(p).find(s => s.vendorId !== main?.vendorId);
+  const priceHistory: Record<string, { price: number; date: string }[]> = {};
+  p.suppliers.forEach(s => {
+    priceHistory[s.vendorId] = sortPrices(s.prices).reverse().map(pr => ({ price: pr.price, date: pr.effectiveDate }));
+  });
+  return {
+    id: p.id,
+    title: p.title,
+    brand: p.brand,
+    category: p.category,
+    item_name: p.itemName,
+    description: p.description,
+    unit_size: p.unitSize,
+    packing: p.packing,
+    primary_vendor_id: main?.vendorId || null,
+    primary_price: priceOn(main),
+    secondary_vendor_id: second?.vendorId || null,
+    secondary_price: priceOn(second),
+    price_history: priceHistory,
+    measuring_unit: p.measuringUnit || null,
+    date_added: p.dateAdded,
+    related_product_id: p.relatedProductIds && p.relatedProductIds.length > 0 ? JSON.stringify(p.relatedProductIds) : null,
+  };
+};
+
+export const productSupplierToDb = (productId: string, s: ProductSupplier) => ({
+  id: s.id,
+  product_id: productId,
+  vendor_id: s.vendorId,
+  is_main: s.isMain,
+  is_active: s.isActive,
+  added_by: s.addedBy || null,
+  added_at: s.addedAt,
+});
+
+export const productPriceToDb = (productId: string, vendorId: string, pr: ProductPrice) => ({
+  id: pr.id,
+  product_id: productId,
+  vendor_id: vendorId,
+  price: pr.price,
+  effective_date: pr.effectiveDate,
+  note: pr.note || null,
+  created_by: pr.createdBy || null,
+  created_at: pr.createdAt,
+});
+
+export const productActivityToDb = (a: ProductActivity) => ({
+  id: a.id,
+  product_id: a.productId,
+  type: a.type,
+  details: a.details,
+  user_id: a.userId || null,
+  user_name: a.userName || null,
+  at: a.at,
 });
 
 // ---- Order ----
@@ -152,6 +251,8 @@ export const userFromDb = (row: any): User => ({
     try { const p = JSON.parse(v); return Array.isArray(p) ? p : []; } catch { return []; }
   })(),
   mustResetPassword: row.must_reset_password ?? false,
+  canCreateProducts: row.can_create_products ?? false,
+  canAddProductSuppliers: row.can_add_product_suppliers ?? false,
 });
 
 export const userToDb = (u: User) => ({
@@ -164,6 +265,8 @@ export const userToDb = (u: User) => ({
   is_active: u.isActive !== false,
   allowed_vendor_ids: u.allowedVendorIds && u.allowedVendorIds.length > 0 ? JSON.stringify(u.allowedVendorIds) : null,
   must_reset_password: u.mustResetPassword ?? false,
+  can_create_products: u.canCreateProducts ?? false,
+  can_add_product_suppliers: u.canAddProductSuppliers ?? false,
 });
 
 // ---- Buyer ----

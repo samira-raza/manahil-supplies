@@ -59,6 +59,9 @@ const useCRMStore = () => {
         { data: deliveriesData },
         { data: paymentsData },
         { data: buyersData },
+        { data: productSuppliersData },
+        { data: productPricesData },
+        { data: productActivityData },
       ] = await Promise.all([
         supabase.from('users').select('*'),
         supabase.from('vendors').select('*'),
@@ -69,11 +72,14 @@ const useCRMStore = () => {
         supabase.from('deliveries').select('*').order('created_at', { ascending: false }),
         supabase.from('payments').select('*'),
         supabase.from('buyers').select('*'),
+        supabase.from('product_suppliers').select('*'),
+        supabase.from('product_prices').select('*'),
+        supabase.from('product_activity').select('*'),
       ]);
 
       setUsers((usersData || []).map(userFromDb));
       setVendors((vendorsData || []).map(vendorFromDb));
-      setProducts((productsData || []).map(productFromDb));
+      setProducts((productsData || []).map(row => productFromDb(row, productSuppliersData || [], productPricesData || [], productActivityData || [])));
       setCategories((categoriesData || []).map(categoryFromDb));
       setMeasuringUnits((measuringUnitsData || []).map(measuringUnitFromDb));
       const parsedOrders = (ordersData || []).map(orderFromDb);
