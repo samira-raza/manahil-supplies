@@ -3,8 +3,10 @@ import React, { useContext, useEffect, useMemo, useState } from 'react';
 import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import { CRMContext, generateId } from '../App';
 import { Icons } from '../constants';
-import { PriceRecord, UserRole } from '../types';
+import { Product, ProductActivity, ProductActivityType, ProductPrice, ProductSupplier, UserRole } from '../types';
 import { db } from '../services/db';
+import { localToday, mainSupplier, activeSuppliers, orderedSuppliers, priceOn, priceRecordOn, sortPrices, supplierOf, hasSupplier } from '../services/pricing';
+import { productPermissions } from '../services/permissions';
 
 const ProductDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -14,9 +16,14 @@ const ProductDetail: React.FC = () => {
 
   const [showMetadataModal, setShowMetadataModal] = useState(false);
   const [metadataRequireChange, setMetadataRequireChange] = useState(false);
-  const [showPricingModal, setShowPricingModal] = useState(false);
+  const [priceDialog, setPriceDialog] = useState<{ vendorId?: string; edit?: ProductPrice } | null>(null);
+  const [supplierDialog, setSupplierDialog] = useState<{ replace?: ProductSupplier } | null>(null);
+  const [stopMainDialog, setStopMainDialog] = useState<ProductSupplier | null>(null);
+  const [deletePriceDialog, setDeletePriceDialog] = useState<{ supplier: ProductSupplier; price: ProductPrice } | null>(null);
+  const [actionError, setActionError] = useState('');
   const [duplicating, setDuplicating] = useState(false);
   const [showAllDeliveries, setShowAllDeliveries] = useState(false);
+  const [showAllActivity, setShowAllActivity] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -35,11 +42,13 @@ const ProductDetail: React.FC = () => {
   }, [ctx?.deliveries, id]);
 
   if (!ctx || !id) return null;
-  const { products, setProducts, vendors, measuringUnits, currentUser } = ctx;
-  const canManageProduct = currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.ADMIN;
+  const { products, setProducts, vendors, measuringUnits, currentUser, orders } = ctx;
+  const can = productPermissions(currentUser);
+  const isSupplierRole = currentUser?.role === UserRole.VENDOR || currentUser?.role === UserRole.VENDOR_STAFF;
+  const mySupplierId = currentUser?.vendorId;
 
   const product = products.find(p => p.id === id);
-  if (!product) {
+  if (!product || (isSupplierRole && !hasSupplier(product, mySupplierId))) {
     return (
       <div className="flex flex-col items-center justify-center h-64 bg-white rounded-2xl md:rounded-3xl border border-slate-200 p-6 md:p-8">
         <h2 className="text-lg md:text-xl font-bold text-slate-900 mb-4">Product Not Found</h2>
@@ -48,29 +57,113 @@ const ProductDetail: React.FC = () => {
     );
   }
 
+  const vendorName = (vendorId?: string) => vendors.find(v => v.id === vendorId)?.name || 'Unknown supplier';
+  // Vendors only ever see their own supplier entry
+  const shownSuppliers = isSupplierRole
+    ? product.suppliers.filter(s => s.vendorId === mySupplierId)
+    : orderedSuppliers(product);
+  const main = mainSupplier(product);
+  const headline = isSupplierRole ? shownSuppliers[0] : main;
+  const otherActive = isSupplierRole ? [] : activeSuppliers(product).filter(s => s.id !== main?.id);
+  const today = localToday();
+
+  // Saves the changed product, then records what happened in the product's activity log
+  const saveChange = async (updated: Product, type: ProductActivityType, details: string) => {
+    setActionError('');
+    const { error } = await db.saveProductWithSuppliers(updated);
+    if (error) {
+      setActionError(`The change was not saved: ${error.message}`);
+      return false;
+    }
+    const entry: ProductActivity = {
+      id: generateId(),
+      productId: updated.id,
+      type,
+      details,
+      userId: currentUser?.id,
+      userName: currentUser?.name,
+      at: new Date().toISOString(),
+    };
+    const { error: logError } = await db.insertProductActivity(entry);
+    const withLog = logError ? updated : { ...updated, activity: [entry, ...updated.activity] };
+    setProducts(prev => prev.map(p => p.id === updated.id ? withLog : p));
+    if (logError) setActionError(`The change was saved, but the activity log was not: ${logError.message}`);
+    return true;
+  };
+
+  const withSupplier = (supplierId: string, change: (s: ProductSupplier) => ProductSupplier): Product => ({
+    ...product,
+    suppliers: product.suppliers.map(s => s.id === supplierId ? change(s) : s),
+  });
+
+  const setMain = async (target: ProductSupplier | null) => {
+    const updated: Product = { ...product, suppliers: product.suppliers.map(s => ({ ...s, isMain: !!target && s.id === target.id })) };
+    const details = target
+      ? `Main supplier changed${main ? ` from ${vendorName(main.vendorId)}` : ''} to ${vendorName(target.vendorId)}`
+      : `${main ? vendorName(main.vendorId) : 'Supplier'} removed as main supplier. No main supplier now`;
+    await saveChange(updated, 'MAIN_SWITCHED', details);
+  };
+
+  const stopSupplier = async (sup: ProductSupplier, newMainId: string | null) => {
+    const updated: Product = {
+      ...product,
+      suppliers: product.suppliers.map(s => {
+        if (s.id === sup.id) return { ...s, isActive: false, isMain: false };
+        if (sup.isMain) return { ...s, isMain: s.id === newMainId };
+        return s;
+      }),
+    };
+    let details = `${vendorName(sup.vendorId)} stopped for this product`;
+    if (sup.isMain) {
+      const nm = updated.suppliers.find(s => s.isMain);
+      details += nm ? `. New main supplier: ${vendorName(nm.vendorId)}` : '. No main supplier now';
+    }
+    if (await saveChange(updated, 'SUPPLIER_DISABLED', details)) setStopMainDialog(null);
+  };
+
+  const restartSupplier = async (sup: ProductSupplier) => {
+    await saveChange(withSupplier(sup.id, s => ({ ...s, isActive: true })), 'SUPPLIER_ENABLED', `${vendorName(sup.vendorId)} switched back on for this product`);
+  };
+
   const handleDuplicate = async () => {
     setDuplicating(true);
-    const today = new Date().toISOString().split('T')[0];
-    const copy = {
+    const now = new Date().toISOString();
+    // The copy gets the same suppliers with their current prices only (no price history)
+    const copy: Product = {
       ...product,
       id: generateId(),
       description: product.description ? `${product.description} [COPY]` : '[COPY]',
       dateAdded: today,
-      priceHistory: { ...product.priceHistory },
+      activity: [],
+      suppliers: product.suppliers.map(s => {
+        const current = priceRecordOn(s, today) || sortPrices(s.prices).slice(-1)[0];
+        return {
+          ...s,
+          id: generateId(),
+          addedBy: currentUser?.name,
+          addedAt: now,
+          prices: current ? [{ id: generateId(), price: current.price, effectiveDate: today, note: `Copied from ${product.title}`, createdBy: currentUser?.name, createdAt: now }] : [],
+        };
+      }),
     };
-    await db.upsertProduct(copy);
-    setProducts(prev => [copy, ...prev]);
+    const { error } = await db.saveProductWithSuppliers(copy);
     setDuplicating(false);
+    if (error) {
+      setActionError(`The copy was not saved: ${error.message}`);
+      return;
+    }
+    setProducts(prev => [copy, ...prev]);
     navigate(`/products/${copy.id}?edit=1`);
   };
 
-  const primaryVendor = vendors.find(s => s.id === product.primaryVendorId);
-  const secondaryVendor = vendors.find(s => s.id === product.secondaryVendorId);
   const relatedProducts = (product.relatedProductIds || []).map((rid: string) => products.find(p => p.id === rid)).filter(Boolean);
 
   // Last 10 deliveries, or all of them when extended history is shown
   const lastDeliveries = showAllDeliveries ? productDeliveries : productDeliveries.slice(0, 10);
   const sizeLabel = product.unitSize ? `${product.unitSize}${product.measuringUnit ? ` ${product.measuringUnit}` : ''}` : '';
+  const activityShown = showAllActivity ? product.activity : product.activity.slice(0, 10);
+  const btn = "flex-1 md:flex-none px-4 md:px-5 py-2.5 md:py-3 bg-white border border-slate-200 rounded-xl font-semibold text-slate-600 hover:bg-slate-50 transition-all shadow-sm text-sm";
+  const smallBtn = "text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-600 hover:border-indigo-300 hover:text-indigo-600";
 
   return (
     <div className="space-y-4 md:space-y-8 animate-in slide-in-from-right-4 duration-500">
@@ -85,14 +178,22 @@ const ProductDetail: React.FC = () => {
             <p className="text-slate-500 text-xs md:text-sm font-medium mt-1">Added: {product.dateAdded}</p>
           </div>
         </div>
-        {canManageProduct && <div className="flex gap-2 md:gap-3">
-          <button onClick={handleDuplicate} disabled={duplicating} className="flex-1 md:flex-none px-4 md:px-5 py-2.5 md:py-3 bg-white border border-slate-200 rounded-xl font-semibold text-slate-600 hover:bg-amber-50 hover:border-amber-300 hover:text-amber-600 transition-all shadow-sm text-sm disabled:opacity-50">
-            {duplicating ? 'Duplicating...' : 'Duplicate'}
-          </button>
-          <button onClick={() => { setMetadataRequireChange(false); setShowMetadataModal(true); }} className="flex-1 md:flex-none px-4 md:px-5 py-2.5 md:py-3 bg-white border border-slate-200 rounded-xl font-semibold text-slate-600 hover:bg-slate-50 transition-all shadow-sm text-sm">Edit Info</button>
-          <button onClick={() => setShowPricingModal(true)} className="flex-1 md:flex-none px-4 md:px-5 py-2.5 md:py-3 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 text-sm">Update Price</button>
+        {(can.createProducts || can.editProductInfo || can.addPrices) && <div className="flex gap-2 md:gap-3 flex-wrap">
+          {can.createProducts && (
+            <button onClick={handleDuplicate} disabled={duplicating} className={`${btn} hover:bg-amber-50 hover:border-amber-300 hover:text-amber-600 disabled:opacity-50`}>
+              {duplicating ? 'Duplicating...' : 'Duplicate'}
+            </button>
+          )}
+          {can.editProductInfo && (
+            <button onClick={() => { setMetadataRequireChange(false); setShowMetadataModal(true); }} className={btn}>Edit Info</button>
+          )}
+          {can.addPrices && activeSuppliers(product).length > 0 && (
+            <button onClick={() => setPriceDialog({})} className="flex-1 md:flex-none px-4 md:px-5 py-2.5 md:py-3 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 text-sm">Add Price</button>
+          )}
         </div>}
       </div>
+
+      {actionError && <div className="p-3 rounded-xl bg-red-50 text-red-700 text-sm font-bold">{actionError}</div>}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-8">
 
@@ -123,25 +224,30 @@ const ProductDetail: React.FC = () => {
           {/* Current Pricing Card */}
           <div className="bg-indigo-600 p-5 md:p-8 rounded-2xl md:rounded-[40px] text-white shadow-2xl shadow-indigo-200 relative overflow-hidden">
              <div className="relative z-10">
-                <h3 className="text-[10px] font-black text-indigo-200 uppercase tracking-widest mb-4 md:mb-8">Active Procurement Rate</h3>
-                <div className="flex items-end gap-2 mb-1">
-                  <span className="text-3xl md:text-5xl font-black">PKR {product.primaryPrice.toFixed(2)}</span>
-                  <span className="text-xs md:text-sm font-bold text-indigo-200 mb-0.5 md:mb-1">/ unit</span>
-                </div>
-                <div className="text-[10px] md:text-xs font-bold text-indigo-100 uppercase tracking-widest truncate">Primary: {primaryVendor?.name}</div>
+                <h3 className="text-[10px] font-black text-indigo-200 uppercase tracking-widest mb-4 md:mb-8">{isSupplierRole ? 'Your Price Today' : 'Main Supplier Price Today'}</h3>
+                {headline ? (
+                  <>
+                    <div className="flex items-end gap-2 mb-1">
+                      <span className="text-3xl md:text-5xl font-black">PKR {priceOn(headline, today).toFixed(2)}</span>
+                      <span className="text-xs md:text-sm font-bold text-indigo-200 mb-0.5 md:mb-1">/ piece</span>
+                    </div>
+                    <div className="text-[10px] md:text-xs font-bold text-indigo-100 uppercase tracking-widest truncate">{isSupplierRole ? vendorName(headline.vendorId) : `Main supplier: ${vendorName(headline.vendorId)}`}</div>
+                  </>
+                ) : (
+                  <div className="text-sm font-bold text-indigo-100">Main supplier: none</div>
+                )}
 
-                <div className="mt-5 md:mt-8 pt-4 md:pt-6 border-t border-indigo-500/50 flex justify-between items-center gap-4">
-                   <div className="min-w-0">
-                      <div className="text-[9px] md:text-[10px] text-indigo-200 font-black uppercase tracking-widest">Secondary Rate</div>
-                      <div className="text-lg md:text-xl font-black">{product.secondaryPrice > 0 ? `PKR ${product.secondaryPrice.toFixed(2)}` : '--'}</div>
-                   </div>
-                   <div className="text-right shrink-0">
-                      <div className="text-[9px] md:text-[10px] text-indigo-200 font-black uppercase tracking-widest">Savings</div>
-                      <div className="text-lg md:text-xl font-black text-emerald-300">
-                        {product.secondaryPrice > 0 && product.primaryPrice > product.secondaryPrice ? `${((product.primaryPrice - product.secondaryPrice) / product.primaryPrice * 100).toFixed(1)}%` : '--'}
+                {otherActive.length > 0 && (
+                  <div className="mt-5 md:mt-8 pt-4 md:pt-6 border-t border-indigo-500/50 space-y-2">
+                    <div className="text-[9px] md:text-[10px] text-indigo-200 font-black uppercase tracking-widest">{main ? 'Other Suppliers' : 'Suppliers'}</div>
+                    {otherActive.map(s => (
+                      <div key={s.id} className="flex justify-between gap-4">
+                        <span className="text-xs font-bold truncate">{vendorName(s.vendorId)}</span>
+                        <span className="text-sm font-black shrink-0">PKR {priceOn(s, today).toFixed(2)}</span>
                       </div>
-                   </div>
-                </div>
+                    ))}
+                  </div>
+                )}
              </div>
              <div className="absolute top-0 right-0 w-32 h-32 bg-white/10 rounded-full -mr-16 -mt-16 blur-3xl"></div>
           </div>
@@ -150,39 +256,76 @@ const ProductDetail: React.FC = () => {
         {/* Middle/Right: Detailed History and Deliveries */}
         <div className="lg:col-span-2 space-y-4 md:space-y-8">
 
-          {/* Vendor Price Revision Audit Log */}
+          {/* Suppliers and price history */}
           <div className="bg-white rounded-2xl md:rounded-[40px] border border-slate-200 shadow-sm overflow-hidden">
-            <div className="p-4 md:p-8 border-b border-slate-50 bg-slate-50/30">
-               <h3 className="text-base md:text-lg font-black text-slate-900 flex items-center gap-2">
-                 <Icons.Category /> Vendor Price Audit Log
-               </h3>
-               <p className="text-[10px] md:text-xs text-slate-500 font-medium mt-1">Rate revisions from primary and secondary sources</p>
+            <div className="p-4 md:p-8 border-b border-slate-50 bg-slate-50/30 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+               <div>
+                 <h3 className="text-base md:text-lg font-black text-slate-900 flex items-center gap-2">
+                   <Icons.Category /> {isSupplierRole ? 'Your Prices' : 'Suppliers and Prices'}
+                 </h3>
+                 <p className="text-[10px] md:text-xs text-slate-500 font-medium mt-1">Each price is per piece and applies from its start date. Orders keep the price of the day they were placed.</p>
+               </div>
+               {can.addSuppliers && (
+                 <button onClick={() => setSupplierDialog({})} className="text-[10px] font-black text-indigo-600 hover:underline uppercase tracking-widest self-start sm:self-auto shrink-0">+ Add Supplier</button>
+               )}
             </div>
             <div className="p-4 md:p-8 grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8">
-               {[product.primaryVendorId, product.secondaryVendorId].filter(Boolean).map(vId => {
-                  const vendor = vendors.find(s => s.id === vId);
-                  const history = product.priceHistory[vId!] || [];
+               {shownSuppliers.map(sup => {
+                  const history = sortPrices(sup.prices);
+                  const current = priceRecordOn(sup, today);
+                  const upcoming = history.filter(h => h.effectiveDate > today);
                   return (
-                    <div key={vId} className="space-y-3 md:space-y-4">
-                       <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest flex justify-between">
-                          <span className="truncate mr-2">{vendor?.name}</span>
-                          <span className="text-indigo-600 shrink-0">{history.length} Points</span>
+                    <div key={sup.id} className={`space-y-3 md:space-y-4 ${!sup.isActive ? 'opacity-60' : ''}`}>
+                       <div className="flex justify-between items-start gap-2">
+                          <div className="min-w-0">
+                            <div className="text-sm font-black text-slate-900 truncate">{vendorName(sup.vendorId)}</div>
+                            <div className="flex gap-1.5 mt-1 flex-wrap">
+                              {sup.isMain && <span className="text-[9px] font-black px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 uppercase">Main</span>}
+                              {!sup.isActive && <span className="text-[9px] font-black px-2 py-0.5 rounded bg-slate-200 text-slate-600 uppercase">Stopped</span>}
+                              {upcoming.length > 0 && <span className="text-[9px] font-black px-2 py-0.5 rounded bg-amber-100 text-amber-700 uppercase">New price from {upcoming[upcoming.length - 1].effectiveDate}</span>}
+                            </div>
+                          </div>
+                          <div className="text-right shrink-0">
+                            <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Today</div>
+                            <div className="text-sm font-black text-indigo-600">{current ? `PKR ${current.price.toFixed(2)}` : '--'}</div>
+                          </div>
                        </div>
+                       {can.manageSuppliers && (
+                         <div className="flex gap-1.5 flex-wrap">
+                           {sup.isActive && !sup.isMain && <button className={smallBtn} onClick={() => setMain(sup)}>Make main</button>}
+                           {sup.isMain && <button className={smallBtn} onClick={() => setMain(null)}>Remove as main</button>}
+                           {sup.isActive && <button className={smallBtn} onClick={() => sup.isMain ? setStopMainDialog(sup) : stopSupplier(sup, null)}>Stop</button>}
+                           {!sup.isActive && <button className={smallBtn} onClick={() => restartSupplier(sup)}>Switch back on</button>}
+                           {sup.isActive && <button className={smallBtn} onClick={() => setSupplierDialog({ replace: sup })}>Replace</button>}
+                         </div>
+                       )}
                        <div className="bg-slate-50 rounded-2xl md:rounded-3xl p-3 md:p-4 space-y-2 md:space-y-3">
-                          {history.slice().reverse().map((h, idx) => (
-                            <div key={idx} className="flex justify-between items-center group/row">
-                               <div className="flex items-center gap-2">
-                                  <div className={`w-1.5 h-1.5 rounded-full ${idx === 0 ? 'bg-indigo-600 animate-pulse' : 'bg-slate-300'}`}></div>
-                                  <span className="text-[10px] md:text-xs font-bold text-slate-600">{h.date}</span>
-                               </div>
-                               <span className="text-xs md:text-sm font-black text-slate-900 group-hover/row:text-indigo-600 transition-colors">PKR {h.price.toFixed(2)}</span>
+                          {history.map(h => (
+                            <div key={h.id}>
+                              <div className="flex justify-between items-center gap-2">
+                                 <div className="flex items-center gap-2">
+                                    <div className={`w-1.5 h-1.5 rounded-full ${h.id === current?.id ? 'bg-indigo-600' : h.effectiveDate > today ? 'bg-amber-400' : 'bg-slate-300'}`}></div>
+                                    <span className="text-[10px] md:text-xs font-bold text-slate-600">From {h.effectiveDate}</span>
+                                 </div>
+                                 <span className="text-xs md:text-sm font-black text-slate-900">PKR {h.price.toFixed(2)}</span>
+                              </div>
+                              {(h.note || h.createdBy) && (
+                                <div className="text-[10px] text-slate-400 ml-3.5">{h.note}{h.note && h.createdBy ? ' · ' : ''}{h.createdBy ? `by ${h.createdBy}` : ''}</div>
+                              )}
+                              {can.correctPrices && (
+                                <div className="ml-3.5 mt-1 flex gap-3">
+                                  <button className="text-[10px] font-bold text-indigo-600 hover:underline" onClick={() => setPriceDialog({ vendorId: sup.vendorId, edit: h })}>Correct</button>
+                                  <button className="text-[10px] font-bold text-red-500 hover:underline" onClick={() => setDeletePriceDialog({ supplier: sup, price: h })}>Delete</button>
+                                </div>
+                              )}
                             </div>
                           ))}
-                          {history.length === 0 && <div className="text-xs text-slate-400 italic py-2">No revision data.</div>}
+                          {history.length === 0 && <div className="text-xs text-slate-400 italic py-2">No prices yet.</div>}
                        </div>
                     </div>
                   );
                })}
+               {shownSuppliers.length === 0 && <div className="text-xs text-slate-400 italic">No suppliers yet.</div>}
             </div>
           </div>
 
@@ -262,6 +405,30 @@ const ProductDetail: React.FC = () => {
             </div>
           </div>
 
+          {/* Product activity log (not shown to vendors) */}
+          {!isSupplierRole && (
+            <div className="bg-white rounded-2xl md:rounded-[40px] border border-slate-200 shadow-sm overflow-hidden">
+              <div className="p-4 md:p-8 border-b border-slate-50 bg-slate-50/30">
+                <h3 className="text-base md:text-lg font-black text-slate-900">Activity</h3>
+                <p className="text-[10px] md:text-xs text-slate-500 font-medium mt-1">Every supplier and price change on this product, with who made it</p>
+              </div>
+              <div className="p-4 md:p-8 space-y-3">
+                {activityShown.map(a => (
+                  <div key={a.id} className="flex flex-col sm:flex-row sm:justify-between gap-1 border-b border-slate-50 pb-2">
+                    <span className="text-sm text-slate-700">{a.details}</span>
+                    <span className="text-[10px] font-bold text-slate-400 shrink-0">{new Date(a.at).toLocaleString()}{a.userName ? ` · ${a.userName}` : ''}</span>
+                  </div>
+                ))}
+                {product.activity.length === 0 && <div className="text-xs text-slate-400 italic">No changes recorded yet.</div>}
+                {product.activity.length > 10 && (
+                  <button onClick={() => setShowAllActivity(v => !v)} className="text-[10px] font-black text-indigo-600 hover:underline uppercase tracking-widest">
+                    {showAllActivity ? 'Show latest 10 only' : `Show all ${product.activity.length}`}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
         </div>
       </div>
 
@@ -276,7 +443,11 @@ const ProductDetail: React.FC = () => {
           onClose={() => { setShowMetadataModal(false); setMetadataRequireChange(false); }}
           onSave={async (updates) => {
             const updated = { ...product, ...updates };
-            await db.upsertProduct(updated);
+            const { error } = await db.upsertProduct(updated);
+            if (error) {
+              setActionError(`The changes were not saved: ${error.message}`);
+              return;
+            }
             setProducts(prev => prev.map(p => p.id === id ? updated : p));
             setShowMetadataModal(false);
             setMetadataRequireChange(false);
@@ -284,32 +455,98 @@ const ProductDetail: React.FC = () => {
         />
       )}
 
-      {/* Update Pricing Modal */}
-      {showPricingModal && (
-        <PricingModal
-          product={product}
-          vendors={vendors}
-          onClose={() => setShowPricingModal(false)}
-          onSave={async (vendorId, newPrice) => {
-            const today = new Date().toISOString().split('T')[0];
-            const updatedHistory = { ...product.priceHistory };
-            const vendorHistory = updatedHistory[vendorId] || [];
-            updatedHistory[vendorId] = [...vendorHistory, { price: newPrice, date: today }];
+      {/* Add or correct a price */}
+      {priceDialog && (
+        <PriceModal
+          suppliers={priceDialog.edit ? product.suppliers.filter(s => s.vendorId === priceDialog.vendorId) : activeSuppliers(product)}
+          vendorName={vendorName}
+          initialVendorId={priceDialog.vendorId || main?.vendorId}
+          editing={priceDialog.edit}
+          ordersAffected={(vendorId, fromDate) => orders.filter(o => o.vendorId === vendorId && o.date >= fromDate && o.items.some(i => i.productId === product.id)).length}
+          onClose={() => setPriceDialog(null)}
+          onSave={async (vendorId, values) => {
+            const sup = supplierOf(product, vendorId);
+            if (!sup) return;
+            const old = priceDialog.edit;
+            if (old) {
+              const updated = withSupplier(sup.id, s => ({ ...s, prices: s.prices.map(pr => pr.id === old.id ? { ...pr, ...values } : pr) }));
+              const ok = await saveChange(updated, 'PRICE_EDITED',
+                `${vendorName(vendorId)} price corrected: PKR ${old.price.toFixed(2)} from ${old.effectiveDate} is now PKR ${values.price.toFixed(2)} from ${values.effectiveDate}`);
+              if (ok) setPriceDialog(null);
+            } else {
+              const entry: ProductPrice = { id: generateId(), ...values, createdBy: currentUser?.name, createdAt: new Date().toISOString() };
+              const updated = withSupplier(sup.id, s => ({ ...s, prices: [...s.prices, entry] }));
+              const ok = await saveChange(updated, 'PRICE_ADDED',
+                `${vendorName(vendorId)} price PKR ${values.price.toFixed(2)} added, from ${values.effectiveDate}${values.note ? ` (${values.note})` : ''}`);
+              if (ok) setPriceDialog(null);
+            }
+          }}
+        />
+      )}
 
-            const isPrimary = vendorId === product.primaryVendorId;
-            const updated = {
-              ...product,
-              ...(isPrimary ? { primaryPrice: newPrice } : { secondaryPrice: newPrice }),
-              priceHistory: updatedHistory
+      {/* Add or replace a supplier */}
+      {supplierDialog && (
+        <SupplierModal
+          vendors={vendors.filter(v => !hasSupplier(product, v.id))}
+          replacing={supplierDialog.replace ? vendorName(supplierDialog.replace.vendorId) : undefined}
+          canSetMain={can.manageSuppliers && !supplierDialog.replace}
+          onClose={() => setSupplierDialog(null)}
+          onSave={async (vendorId, values, makeMain) => {
+            const now = new Date().toISOString();
+            const old = supplierDialog.replace;
+            const newSup: ProductSupplier = {
+              id: generateId(),
+              vendorId,
+              isMain: old ? old.isMain : makeMain,
+              isActive: true,
+              addedBy: currentUser?.name,
+              addedAt: now,
+              prices: [{ id: generateId(), ...values, createdBy: currentUser?.name, createdAt: now }],
             };
+            const suppliers = product.suppliers.map(s => {
+              if (old && s.id === old.id) return { ...s, isActive: false, isMain: false };
+              if (newSup.isMain) return { ...s, isMain: false };
+              return s;
+            });
+            const updated: Product = { ...product, suppliers: [...suppliers, newSup] };
+            const priceText = `PKR ${values.price.toFixed(2)} from ${values.effectiveDate}`;
+            const ok = old
+              ? await saveChange(updated, 'SUPPLIER_REPLACED', `${vendorName(old.vendorId)} replaced by ${vendorName(vendorId)} (${priceText})${newSup.isMain ? '. It is now the main supplier' : ''}`)
+              : await saveChange(updated, 'SUPPLIER_ADDED', `${vendorName(vendorId)} added as a supplier (${priceText})${newSup.isMain ? ' and set as main supplier' : ''}`);
+            if (ok) setSupplierDialog(null);
+          }}
+        />
+      )}
 
-            const { error } = await db.upsertProduct(updated);
+      {/* Stopping the main supplier: pick a new main, or none */}
+      {stopMainDialog && (
+        <StopMainModal
+          supplierName={vendorName(stopMainDialog.vendorId)}
+          others={activeSuppliers(product).filter(s => s.id !== stopMainDialog.id).map(s => ({ id: s.id, name: vendorName(s.vendorId) }))}
+          onClose={() => setStopMainDialog(null)}
+          onConfirm={newMainId => stopSupplier(stopMainDialog, newMainId)}
+        />
+      )}
+
+      {/* Delete a wrong price entry (Super Admin) */}
+      {deletePriceDialog && (
+        <ConfirmModal
+          title="Delete this price?"
+          message={deletePriceDialog.supplier.prices.length <= 1
+            ? 'This is the only price for this supplier, so it cannot be deleted. Correct it instead.'
+            : `PKR ${deletePriceDialog.price.price.toFixed(2)} from ${deletePriceDialog.price.effectiveDate} for ${vendorName(deletePriceDialog.supplier.vendorId)} will be removed. Orders already placed keep their price.`}
+          confirmLabel={deletePriceDialog.supplier.prices.length <= 1 ? undefined : 'Delete price'}
+          onClose={() => setDeletePriceDialog(null)}
+          onConfirm={async () => {
+            const { supplier, price } = deletePriceDialog;
+            const { error } = await db.deleteProductPrice(price.id);
             if (error) {
-              alert(`Price was not saved: ${error.message}`);
+              setActionError(`The price was not deleted: ${error.message}`);
               return;
             }
-            setProducts(prev => prev.map(p => p.id === id ? updated : p));
-            setShowPricingModal(false);
+            const updated = withSupplier(supplier.id, s => ({ ...s, prices: s.prices.filter(pr => pr.id !== price.id) }));
+            const ok = await saveChange(updated, 'PRICE_DELETED', `${vendorName(supplier.vendorId)} price PKR ${price.price.toFixed(2)} from ${price.effectiveDate} deleted`);
+            if (ok) setDeletePriceDialog(null);
           }}
         />
       )}
@@ -465,82 +702,225 @@ const MetadataModal: React.FC<{
   );
 };
 
-// Pricing Update Modal Component
-const PricingModal: React.FC<{
-  product: any;
-  vendors: any[];
+const inputCls = "w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm";
+const labelCls = "block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2";
+const cancelCls = "px-6 md:px-8 py-3 md:py-4 rounded-xl md:rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors uppercase tracking-widest text-[10px]";
+const saveCls = "px-8 md:px-12 py-3 md:py-4 rounded-xl md:rounded-2xl font-black text-white bg-indigo-600 hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 uppercase tracking-widest text-[10px] disabled:opacity-50";
+
+type PriceValues = { price: number; effectiveDate: string; note?: string };
+
+const ModalShell: React.FC<{ title: string; subtitle?: string; onClose: () => void; children: React.ReactNode }> = ({ title, subtitle, onClose, children }) => (
+  <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-2 md:p-4">
+    <div className="bg-white rounded-2xl md:rounded-[40px] w-full max-w-md shadow-2xl animate-in zoom-in-95 duration-200 border border-slate-200 max-h-[95vh] overflow-y-auto">
+      <div className="p-4 md:p-8 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+        <div>
+          <h2 className="text-lg md:text-2xl font-black text-slate-900">{title}</h2>
+          {subtitle && <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">{subtitle}</p>}
+        </div>
+        <button onClick={onClose} className="p-2 md:p-3 hover:bg-slate-200 rounded-xl md:rounded-2xl transition-colors">
+          <svg className="w-5 h-5 md:w-6 md:h-6 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+        </button>
+      </div>
+      <div className="p-4 md:p-8 space-y-4 md:space-y-6">{children}</div>
+    </div>
+  </div>
+);
+
+// Price, start date and note fields, shared by the price and supplier dialogs
+const PriceFields: React.FC<{ price: string; date: string; note: string; setPrice: (v: string) => void; setDate: (v: string) => void; setNote: (v: string) => void }> =
+  ({ price, date, note, setPrice, setDate, setNote }) => (
+  <>
+    <div className="grid grid-cols-2 gap-3">
+      <div>
+        <label className={labelCls}>Price per piece (PKR)*</label>
+        <input type="number" step="0.001" min="0" value={price} onChange={e => setPrice(e.target.value)} className={inputCls} placeholder="0.00" required />
+      </div>
+      <div>
+        <label className={labelCls}>Starts on*</label>
+        <input type="date" value={date} onChange={e => setDate(e.target.value)} className={inputCls} required />
+      </div>
+    </div>
+    <div>
+      <label className={labelCls}>Note</label>
+      <input type="text" value={note} onChange={e => setNote(e.target.value)} className={inputCls} placeholder="Optional, e.g. Rate revised by vendor letter" />
+    </div>
+  </>
+);
+
+const readPrice = (price: string, date: string, note: string): PriceValues | string => {
+  const n = parseFloat(price);
+  if (price === '' || isNaN(n) || n < 0) return 'Please enter a valid price.';
+  if (!date) return 'Please choose the date this price starts.';
+  return { price: n, effectiveDate: date, note: note.trim() || undefined };
+};
+
+// Add a new price (or correct an existing one), with a warning for past start dates
+const PriceModal: React.FC<{
+  suppliers: ProductSupplier[];
+  vendorName: (id?: string) => string;
+  initialVendorId?: string;
+  editing?: ProductPrice;
+  ordersAffected: (vendorId: string, fromDate: string) => number;
   onClose: () => void;
-  onSave: (vendorId: string, newPrice: number) => void;
-}> = ({ product, vendors, onClose, onSave }) => {
-  const [selectedVendor, setSelectedVendor] = useState(product.primaryVendorId);
-  const [newPrice, setNewPrice] = useState('');
+  onSave: (vendorId: string, values: PriceValues) => Promise<void>;
+}> = ({ suppliers, vendorName, initialVendorId, editing, ordersAffected, onClose, onSave }) => {
+  const [vendorId, setVendorId] = useState(initialVendorId && suppliers.some(s => s.vendorId === initialVendorId) ? initialVendorId : suppliers[0]?.vendorId || '');
+  const [price, setPrice] = useState(editing ? String(editing.price) : '');
+  const [date, setDate] = useState(editing ? editing.effectiveDate : localToday());
+  const [note, setNote] = useState(editing?.note || '');
+  const [error, setError] = useState('');
+  const [confirmPast, setConfirmPast] = useState<{ values: PriceValues; count: number } | null>(null);
+  const [saving, setSaving] = useState(false);
 
-  const primaryVendor = vendors.find(s => s.id === product.primaryVendorId);
-  const secondaryVendor = vendors.find(s => s.id === product.secondaryVendorId);
+  const current = priceRecordOn(suppliers.find(s => s.vendorId === vendorId));
 
-  const currentPrice = selectedVendor === product.primaryVendorId ? product.primaryPrice : product.secondaryPrice;
+  const save = async (values: PriceValues) => {
+    setSaving(true);
+    await onSave(vendorId, values);
+    setSaving(false);
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newPrice || isNaN(parseFloat(newPrice))) {
-      alert('Please enter a valid price');
+    const values = readPrice(price, date, note);
+    if (typeof values === 'string') { setError(values); return; }
+    setError('');
+    if (values.effectiveDate < localToday()) {
+      setConfirmPast({ values, count: ordersAffected(vendorId, values.effectiveDate) });
       return;
     }
-    onSave(selectedVendor, parseFloat(newPrice));
+    save(values);
+  };
+
+  if (confirmPast) {
+    return (
+      <ModalShell title="Price starts in the past" onClose={onClose}>
+        <div className="p-4 rounded-2xl bg-amber-50 text-amber-800 text-sm font-medium space-y-2">
+          <p>This price starts on {confirmPast.values.effectiveDate}, which is in the past.</p>
+          <p>Orders already placed keep the price they were placed at. <b>{confirmPast.count} order{confirmPast.count === 1 ? '' : 's'}</b> with {vendorName(vendorId)} for this product since that date will not change.</p>
+        </div>
+        <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 pt-2">
+          <button type="button" onClick={() => setConfirmPast(null)} className={cancelCls}>Go back</button>
+          <button type="button" disabled={saving} onClick={() => save(confirmPast.values)} className={saveCls}>{saving ? 'Saving...' : 'Save price'}</button>
+        </div>
+      </ModalShell>
+    );
+  }
+
+  return (
+    <ModalShell title={editing ? 'Correct a Price' : 'Add a Price'} subtitle={editing ? 'Super Admin only' : 'New price for one supplier'} onClose={onClose}>
+      <form onSubmit={handleSubmit} className="space-y-4 md:space-y-6">
+        <div>
+          <label className={labelCls}>Supplier*</label>
+          <select value={vendorId} onChange={e => setVendorId(e.target.value)} disabled={!!editing} className={inputCls}>
+            {suppliers.map(s => <option key={s.id} value={s.vendorId}>{vendorName(s.vendorId)}{s.isMain ? ' (Main)' : ''}</option>)}
+          </select>
+        </div>
+        {!editing && (
+          <div className="bg-slate-50 p-4 rounded-xl md:rounded-2xl">
+            <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Price today</div>
+            <div className="text-2xl font-black text-slate-900">{current ? `PKR ${current.price.toFixed(2)}` : '--'}</div>
+          </div>
+        )}
+        <PriceFields price={price} date={date} note={note} setPrice={setPrice} setDate={setDate} setNote={setNote} />
+        {error && <div className="p-3 rounded-xl bg-red-50 text-red-700 text-sm font-bold">{error}</div>}
+        <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 md:gap-4 pt-4 border-t border-slate-100">
+          <button type="button" onClick={onClose} className={cancelCls}>Cancel</button>
+          <button type="submit" disabled={saving} className={saveCls}>{saving ? 'Saving...' : editing ? 'Save correction' : 'Add price'}</button>
+        </div>
+      </form>
+    </ModalShell>
+  );
+};
+
+// Add a supplier to the product, or replace an existing one
+const SupplierModal: React.FC<{
+  vendors: { id: string; name: string }[];
+  replacing?: string;
+  canSetMain: boolean;
+  onClose: () => void;
+  onSave: (vendorId: string, values: PriceValues, makeMain: boolean) => Promise<void>;
+}> = ({ vendors, replacing, canSetMain, onClose, onSave }) => {
+  const [vendorId, setVendorId] = useState('');
+  const [price, setPrice] = useState('');
+  const [date, setDate] = useState(localToday());
+  const [note, setNote] = useState('');
+  const [makeMain, setMakeMain] = useState(false);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!vendorId) { setError('Please choose a supplier.'); return; }
+    const values = readPrice(price, date, note);
+    if (typeof values === 'string') { setError(values); return; }
+    setSaving(true);
+    await onSave(vendorId, values, makeMain);
+    setSaving(false);
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-2 md:p-4">
-      <div className="bg-white rounded-2xl md:rounded-[40px] w-full max-w-md shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 border border-slate-200">
-        <div className="p-4 md:p-8 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+    <ModalShell title={replacing ? 'Replace Supplier' : 'Add Supplier'} subtitle={replacing ? `${replacing} will be stopped for this product` : 'With its first price'} onClose={onClose}>
+      {vendors.length === 0 ? (
+        <p className="text-sm text-slate-500">Every supplier is already linked to this product.</p>
+      ) : (
+        <form onSubmit={handleSubmit} className="space-y-4 md:space-y-6">
           <div>
-            <h2 className="text-lg md:text-2xl font-black text-slate-900">Update Pricing</h2>
-            <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Record new vendor rate</p>
-          </div>
-          <button onClick={onClose} className="p-2 md:p-3 hover:bg-slate-200 rounded-xl md:rounded-2xl transition-colors">
-            <svg className="w-5 h-5 md:w-6 md:h-6 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="p-4 md:p-10 space-y-4 md:space-y-6">
-          <div>
-            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Select Vendor*</label>
-            <select
-              value={selectedVendor}
-              onChange={(e) => setSelectedVendor(e.target.value)}
-              className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm"
-            >
-              {primaryVendor && <option value={product.primaryVendorId}>{primaryVendor.name} (Primary)</option>}
-              {secondaryVendor && <option value={product.secondaryVendorId}>{secondaryVendor.name} (Secondary)</option>}
+            <label className={labelCls}>Supplier*</label>
+            <select value={vendorId} onChange={e => setVendorId(e.target.value)} className={inputCls} required>
+              <option value="">-- Choose Supplier --</option>
+              {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
             </select>
           </div>
-
-          <div className="bg-slate-50 p-4 md:p-6 rounded-xl md:rounded-2xl">
-            <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Current Rate</div>
-            <div className="text-2xl md:text-3xl font-black text-slate-900">PKR {currentPrice.toFixed(2)}</div>
-          </div>
-
-          <div>
-            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">New Price per piece (PKR)*</label>
-            <input
-              type="number"
-              step="0.001"
-              value={newPrice}
-              onChange={(e) => setNewPrice(e.target.value)}
-              className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm"
-              placeholder="Enter new price"
-              required
-            />
-          </div>
-
-          <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 md:gap-4 pt-4 md:pt-6 border-t border-slate-100">
-            <button type="button" onClick={onClose} className="px-6 md:px-8 py-3 md:py-4 rounded-xl md:rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors uppercase tracking-widest text-[10px]">Cancel</button>
-            <button type="submit" className="px-8 md:px-12 py-3 md:py-4 rounded-xl md:rounded-2xl font-black text-white bg-indigo-600 hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 uppercase tracking-widest text-[10px]">Update Price</button>
+          <PriceFields price={price} date={date} note={note} setPrice={setPrice} setDate={setDate} setNote={setNote} />
+          {canSetMain && (
+            <label className="flex items-center gap-2 text-sm font-bold text-slate-600">
+              <input type="checkbox" checked={makeMain} onChange={e => setMakeMain(e.target.checked)} /> Make this the main supplier
+            </label>
+          )}
+          {error && <div className="p-3 rounded-xl bg-red-50 text-red-700 text-sm font-bold">{error}</div>}
+          <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 md:gap-4 pt-4 border-t border-slate-100">
+            <button type="button" onClick={onClose} className={cancelCls}>Cancel</button>
+            <button type="submit" disabled={saving} className={saveCls}>{saving ? 'Saving...' : replacing ? 'Replace' : 'Add supplier'}</button>
           </div>
         </form>
-      </div>
-    </div>
+      )}
+    </ModalShell>
   );
 };
+
+// Stopping the main supplier asks for a new main supplier, or none
+const StopMainModal: React.FC<{
+  supplierName: string;
+  others: { id: string; name: string }[];
+  onClose: () => void;
+  onConfirm: (newMainId: string | null) => void;
+}> = ({ supplierName, others, onClose, onConfirm }) => {
+  const [choice, setChoice] = useState('');
+  return (
+    <ModalShell title="Stop the main supplier" onClose={onClose}>
+      <p className="text-sm text-slate-600">{supplierName} is the main supplier. Choose a new main supplier, or none.</p>
+      <select value={choice} onChange={e => setChoice(e.target.value)} className={inputCls}>
+        <option value="">No main supplier</option>
+        {others.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+      </select>
+      <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 pt-2">
+        <button type="button" onClick={onClose} className={cancelCls}>Cancel</button>
+        <button type="button" onClick={() => onConfirm(choice || null)} className={saveCls}>Stop supplier</button>
+      </div>
+    </ModalShell>
+  );
+};
+
+const ConfirmModal: React.FC<{ title: string; message: string; confirmLabel?: string; onClose: () => void; onConfirm: () => void }> =
+  ({ title, message, confirmLabel, onClose, onConfirm }) => (
+  <ModalShell title={title} onClose={onClose}>
+    <p className="text-sm text-slate-600">{message}</p>
+    <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 pt-2">
+      <button type="button" onClick={onClose} className={cancelCls}>{confirmLabel ? 'Cancel' : 'Close'}</button>
+      {confirmLabel && <button type="button" onClick={onConfirm} className="px-8 py-3 md:py-4 rounded-xl md:rounded-2xl font-black text-white bg-red-600 hover:bg-red-700 uppercase tracking-widest text-[10px]">{confirmLabel}</button>}
+    </div>
+  </ModalShell>
+);
 
 export default ProductDetail;

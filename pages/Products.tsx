@@ -1,10 +1,17 @@
 
 import React, { useContext, useState, useEffect, useMemo } from 'react';
 import { CRMContext, generateId } from '../App';
-import { Product, UserRole, PriceRecord } from '../types';
+import { Product, ProductSupplier, UserRole } from '../types';
 import { Icons } from '../constants';
 import { Link, useNavigate } from 'react-router-dom';
 import { db } from '../services/db';
+import { localToday, mainSupplier, orderedSuppliers, priceOn, sortPrices, hasSupplier, deliveryLine } from '../services/pricing';
+import { productPermissions } from '../services/permissions';
+
+// One supplier on the Create Product form, with one or more dated prices
+type SupplierDraft = { vendorId: string; prices: { price: string; effectiveDate: string; note: string }[] };
+const emptyPriceRow = () => ({ price: '', effectiveDate: localToday(), note: '' });
+const emptySupplierDraft = (): SupplierDraft => ({ vendorId: '', prices: [emptyPriceRow()] });
 
 const Products: React.FC = () => {
   const ctx = useContext(CRMContext);
@@ -26,12 +33,12 @@ const Products: React.FC = () => {
     unitSize: '',
     measuringUnit: '',
     packing: '',
-    primaryVendorId: '',
-    primaryPrice: '',
-    secondaryVendorId: '',
-    secondaryPrice: '',
     relatedProductId: '',
   });
+  const [supplierDrafts, setSupplierDrafts] = useState<SupplierDraft[]>([emptySupplierDraft()]);
+  const [mainVendorId, setMainVendorId] = useState('');
+  const [formError, setFormError] = useState('');
+  const [saving, setSaving] = useState(false);
 
   // Auto-generate display name
   const generatedTitle = useMemo(() => {
@@ -54,76 +61,36 @@ const Products: React.FC = () => {
   if (!ctx) return null;
   const { products, setProducts, vendors, currentUser, categories, measuringUnits, deliveries } = ctx;
 
-  const isSuperAdmin = currentUser?.role === UserRole.SUPER_ADMIN;
-  const isAdmin = currentUser?.role === UserRole.ADMIN;
   const isVendor = currentUser?.role === UserRole.VENDOR;
   const isVendorStaff = currentUser?.role === UserRole.VENDOR_STAFF;
-  const canEditProducts = isSuperAdmin || isAdmin; // Only super admin and admin can add/edit products
+  const isSupplierRole = isVendor || isVendorStaff;
+  const can = productPermissions(currentUser);
   const mySupplierId = currentUser?.vendorId;
 
-  // Filter products based on role
-  const baseProducts = (isVendor || isVendorStaff)
-    ? products.filter(p => p.primaryVendorId === mySupplierId || p.secondaryVendorId === mySupplierId)
+  // Vendors only see products they supply, and only their own price
+  const baseProducts = isSupplierRole
+    ? products.filter(p => hasSupplier(p, mySupplierId))
     : products;
+  const visibleSuppliers = (p: Product) =>
+    isSupplierRole ? p.suppliers.filter(s => s.vendorId === mySupplierId) : orderedSuppliers(p);
 
   const filtered = baseProducts.filter(p => {
     const matchesSearch = p.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
       p.brand.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesCategory = !filterCategory || p.category === filterCategory;
-    const matchesVendor = !filterVendor || p.primaryVendorId === filterVendor || p.secondaryVendorId === filterVendor;
+    const matchesVendor = !filterVendor || hasSupplier(p, filterVendor);
     return matchesSearch && matchesCategory && matchesVendor;
   });
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
-    setFormData(prev => {
-      // If primary vendor is changed to match current secondary, clear secondary
-      if (name === 'primaryVendorId' && value && value === prev.secondaryVendorId) {
-        return { ...prev, [name]: value, secondaryVendorId: '', secondaryPrice: '' };
-      }
-      return { ...prev, [name]: value };
-    });
+    setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formData.itemName || !formData.brand || !formData.primaryVendorId || !formData.primaryPrice) {
-      alert('Missing required fields: Brand, Item Name, Price, and Primary Vendor must be provided.');
-      return;
-    }
+  const updateSupplierDraft = (idx: number, change: (d: SupplierDraft) => SupplierDraft) =>
+    setSupplierDrafts(prev => prev.map((d, i) => i === idx ? change(d) : d));
 
-    const today = new Date().toISOString().split('T')[0];
-    const newPriceHistory: Record<string, PriceRecord[]> = {};
-
-    if (formData.primaryVendorId) {
-      newPriceHistory[formData.primaryVendorId] = [{ price: parseFloat(formData.primaryPrice), date: today }];
-    }
-    if (formData.secondaryVendorId && formData.secondaryPrice) {
-      newPriceHistory[formData.secondaryVendorId] = [{ price: parseFloat(formData.secondaryPrice), date: today }];
-    }
-
-    const newProduct: Product = {
-      id: generateId(),
-      title: generatedTitle,
-      brand: formData.brand,
-      category: formData.category,
-      itemName: formData.itemName,
-      description: formData.description,
-      unitSize: formData.unitSize,
-      measuringUnit: formData.measuringUnit,
-      packing: formData.packing,
-      primaryVendorId: formData.primaryVendorId,
-      primaryPrice: parseFloat(formData.primaryPrice),
-      secondaryVendorId: formData.secondaryVendorId || '',
-      secondaryPrice: formData.secondaryPrice ? parseFloat(formData.secondaryPrice) : 0,
-      priceHistory: newPriceHistory,
-      dateAdded: today,
-      relatedProductIds: formData.relatedProductId ? [formData.relatedProductId] : [],
-    };
-
-    await db.upsertProduct(newProduct);
-    setProducts(prev => [newProduct, ...prev]);
-    setShowAddModal(false);
+  const resetForm = () => {
     setFormData({
       brand: '',
       category: categories[0]?.name || '',
@@ -132,29 +99,99 @@ const Products: React.FC = () => {
       unitSize: '',
       measuringUnit: '',
       packing: '',
-      primaryVendorId: '',
-      primaryPrice: '',
-      secondaryVendorId: '',
-      secondaryPrice: '',
       relatedProductId: '',
     });
+    setSupplierDrafts([emptySupplierDraft()]);
+    setMainVendorId('');
+    setFormError('');
   };
 
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setFormError('');
+    if (!formData.itemName || !formData.brand) {
+      setFormError('Brand and Item Name are required.');
+      return;
+    }
+    const drafts = supplierDrafts.filter(d => d.vendorId);
+    if (drafts.length === 0) {
+      setFormError('Add at least one supplier with a price.');
+      return;
+    }
+    for (const d of drafts) {
+      const vendorName = vendors.find(v => v.id === d.vendorId)?.name || 'supplier';
+      const rows = d.prices.filter(r => r.price !== '');
+      if (rows.length === 0) {
+        setFormError(`Add a price for ${vendorName}.`);
+        return;
+      }
+      if (rows.some(r => isNaN(parseFloat(r.price)) || parseFloat(r.price) < 0 || !r.effectiveDate)) {
+        setFormError(`Check the prices and dates for ${vendorName}.`);
+        return;
+      }
+    }
+
+    const today = localToday();
+    const now = new Date().toISOString();
+    const productId = generateId();
+    const suppliers: ProductSupplier[] = drafts.map(d => ({
+      id: generateId(),
+      vendorId: d.vendorId,
+      isMain: d.vendorId === mainVendorId,
+      isActive: true,
+      addedBy: currentUser?.name,
+      addedAt: now,
+      prices: d.prices.filter(r => r.price !== '').map(r => ({
+        id: generateId(),
+        price: parseFloat(r.price),
+        effectiveDate: r.effectiveDate,
+        note: r.note.trim() || undefined,
+        createdBy: currentUser?.name,
+        createdAt: now,
+      })),
+    }));
+
+    const newProduct: Product = {
+      id: productId,
+      title: generatedTitle,
+      brand: formData.brand,
+      category: formData.category,
+      itemName: formData.itemName,
+      description: formData.description,
+      unitSize: formData.unitSize,
+      measuringUnit: formData.measuringUnit,
+      packing: formData.packing,
+      suppliers,
+      activity: [],
+      dateAdded: today,
+      relatedProductIds: formData.relatedProductId ? [formData.relatedProductId] : [],
+    };
+
+    setSaving(true);
+    const { error } = await db.saveProductWithSuppliers(newProduct);
+    setSaving(false);
+    if (error) {
+      setFormError(`The product was not saved: ${error.message}`);
+      return;
+    }
+    setProducts(prev => [newProduct, ...prev]);
+    setShowAddModal(false);
+    resetForm();
+  };
+
+  // Latest delivery of this product (for vendors: their own deliveries only)
   const getLastDeliveryInfo = (productId: string) => {
-    const relevantDeliveries = deliveries
-      .filter(d => d.items.some(item => item.productId === productId))
-      .sort((a, b) => new Date(b.deliveryDate).getTime() - new Date(a.deliveryDate).getTime());
+    const lines = deliveries
+      .flatMap(d => d.items.filter(i => i.productId === productId).map(item => ({ d, vendorId: deliveryLine(item, ctx.orders, products).vendorId })))
+      .filter(l => !isSupplierRole || l.vendorId === mySupplierId)
+      .sort((a, b) => new Date(b.d.deliveryDate).getTime() - new Date(a.d.deliveryDate).getTime());
 
-    if (relevantDeliveries.length === 0) return null;
-    
-    const lastDel = relevantDeliveries[0];
-    const prod = products.find(p => p.id === productId);
-    const vendor = vendors.find(s => s.id === prod?.primaryVendorId);
-
+    if (lines.length === 0) return null;
+    const last = lines[0];
     return {
-      date: lastDel.deliveryDate,
-      vendorName: vendor?.name || 'Unknown Vendor',
-      challan: lastDel.challanNumber
+      date: last.d.deliveryDate,
+      vendorName: vendors.find(s => s.id === last.vendorId)?.name || 'Unknown Vendor',
+      challan: last.d.challanNumber
     };
   };
 
@@ -165,9 +202,9 @@ const Products: React.FC = () => {
           <h1 className="text-2xl md:text-3xl font-black text-slate-900 tracking-tight">Products</h1>
           <p className="text-sm text-slate-500 mt-1">{filtered.length} of {products.length} products</p>
         </div>
-        {canEditProducts && (
+        {can.createProducts && (
           <button
-            onClick={() => setShowAddModal(true)}
+            onClick={() => { resetForm(); setShowAddModal(true); }}
             className="flex items-center justify-center gap-2 px-4 py-2.5 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 text-sm w-full md:w-auto"
           >
             <Icons.Plus />
@@ -201,7 +238,7 @@ const Products: React.FC = () => {
                 <option key={cat.id} value={cat.name}>{cat.name}</option>
               ))}
             </select>
-            <select
+            {!isSupplierRole && <select
               value={filterVendor}
               onChange={(e) => setFilterVendor(e.target.value)}
               className="px-4 py-3 rounded-xl bg-white border border-slate-200 focus:ring-2 focus:ring-indigo-500 transition-all text-sm font-medium min-w-[140px]"
@@ -210,7 +247,7 @@ const Products: React.FC = () => {
               {vendors.map(s => (
                 <option key={s.id} value={s.id}>{s.name}</option>
               ))}
-            </select>
+            </select>}
             {(filterCategory || filterVendor || searchTerm) && (
               <button
                 onClick={() => { setFilterCategory(''); setFilterVendor(''); setSearchTerm(''); }}
@@ -228,16 +265,18 @@ const Products: React.FC = () => {
               <tr className="bg-slate-50/30 border-b border-slate-100">
                 <th className="px-4 md:px-8 py-3 md:py-5 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-wider md:tracking-widest">Product Name</th>
                 <th className="px-4 md:px-8 py-3 md:py-5 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-wider md:tracking-widest">Size</th>
-                <th className="px-4 md:px-8 py-3 md:py-5 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-wider md:tracking-widest">Primary</th>
-                <th className="px-4 md:px-8 py-3 md:py-5 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-wider md:tracking-widest">Secondary</th>
+                <th className="px-4 md:px-8 py-3 md:py-5 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-wider md:tracking-widest">{isSupplierRole ? 'Your Price' : 'Main Supplier'}</th>
+                <th className="px-4 md:px-8 py-3 md:py-5 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-wider md:tracking-widest">{isSupplierRole ? '' : 'Other Suppliers'}</th>
                 <th className="px-4 md:px-8 py-3 md:py-5 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-wider md:tracking-widest hidden sm:table-cell">Last Movement</th>
                 <th className="px-4 md:px-8 py-3 md:py-5 text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-wider md:tracking-widest text-right">Ops</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filtered.map(p => {
-                const pVendor = vendors.find(s => s.id === p.primaryVendorId);
-                const sVendor = vendors.find(s => s.id === p.secondaryVendorId);
+                const shown = visibleSuppliers(p);
+                const first = isSupplierRole ? shown[0] : mainSupplier(p);
+                const others = isSupplierRole ? [] : shown.filter(s => s !== first && s.isActive);
+                const vendorName = (vendorId: string) => vendors.find(v => v.id === vendorId)?.name || 'Unknown';
                 const lastDelivery = getLastDeliveryInfo(p.id);
                 const isExpanded = expandedProductId === p.id;
 
@@ -257,18 +296,25 @@ const Products: React.FC = () => {
                         <div className="text-sm font-bold text-slate-700">{p.unitSize || '--'}</div>
                       </td>
                       <td className="px-4 md:px-8 py-4 md:py-6">
-                        <div className="text-sm md:text-lg font-black text-indigo-600">PKR {p.primaryPrice.toFixed(2)}</div>
-                        <div className="text-[9px] md:text-[10px] font-bold text-slate-400 truncate max-w-[80px] md:max-w-[120px]" title={pVendor?.name}>
-                          {pVendor?.name || 'N/A'}
-                        </div>
+                        {first ? (
+                          <>
+                            <div className="text-sm md:text-lg font-black text-indigo-600">PKR {priceOn(first).toFixed(2)}</div>
+                            <div className="text-[9px] md:text-[10px] font-bold text-slate-400 truncate max-w-[80px] md:max-w-[120px]" title={vendorName(first.vendorId)}>
+                              {vendorName(first.vendorId)}{!first.isActive ? ' (stopped)' : ''}
+                            </div>
+                          </>
+                        ) : (
+                          <span className="text-xs text-slate-400 italic">No main supplier</span>
+                        )}
                       </td>
                       <td className="px-4 md:px-8 py-4 md:py-6">
-                        <div className="text-sm md:text-lg font-black text-slate-400">
-                          {p.secondaryPrice > 0 ? `PKR ${p.secondaryPrice.toFixed(2)}` : '--'}
-                        </div>
-                        <div className="text-[9px] md:text-[10px] font-bold text-slate-400 truncate max-w-[80px] md:max-w-[120px]" title={sVendor?.name}>
-                          {sVendor?.name || 'N/A'}
-                        </div>
+                        {others.length > 0 ? others.map(o => (
+                          <div key={o.id} className="text-[10px] md:text-xs font-bold text-slate-500 truncate max-w-[120px] md:max-w-[180px]" title={vendorName(o.vendorId)}>
+                            {vendorName(o.vendorId)}: <span className="font-black text-slate-700">PKR {priceOn(o).toFixed(2)}</span>
+                          </div>
+                        )) : (
+                          <span className="text-sm text-slate-300">--</span>
+                        )}
                       </td>
                       <td className="px-4 md:px-8 py-4 md:py-6 hidden sm:table-cell">
                         {lastDelivery ? (
@@ -314,23 +360,21 @@ const Products: React.FC = () => {
                                     <Icons.Category /> VENDOR PRICE REVISION
                                  </h4>
                                  <div className="grid grid-cols-2 gap-4">
-                                    {[p.primaryVendorId, p.secondaryVendorId].filter(Boolean).map(vId => {
-                                      const vendor = vendors.find(s => s.id === vId);
-                                      const history = p.priceHistory[vId!] || [];
-                                      return (
-                                        <div key={vId} className="bg-white p-5 rounded-3xl border border-indigo-100 shadow-sm">
-                                           <div className="text-xs font-black text-slate-900 mb-4 border-b border-slate-50 pb-2 truncate">{vendor?.name}</div>
+                                    {shown.map(sup => (
+                                        <div key={sup.id} className="bg-white p-5 rounded-3xl border border-indigo-100 shadow-sm">
+                                           <div className="text-xs font-black text-slate-900 mb-4 border-b border-slate-50 pb-2 truncate">
+                                              {vendorName(sup.vendorId)}{sup.isMain ? ' (Main)' : ''}{!sup.isActive ? ' (Stopped)' : ''}
+                                           </div>
                                            <div className="space-y-2">
-                                              {history.slice(-3).reverse().map((h, idx) => (
-                                                <div key={idx} className="flex justify-between items-center">
-                                                   <span className="text-[10px] font-bold text-slate-500">{h.date}</span>
+                                              {sortPrices(sup.prices).slice(0, 3).map(h => (
+                                                <div key={h.id} className="flex justify-between items-center">
+                                                   <span className="text-[10px] font-bold text-slate-500">From {h.effectiveDate}</span>
                                                    <span className="text-xs font-black text-indigo-600">PKR {h.price.toFixed(2)}</span>
                                                 </div>
                                               ))}
                                            </div>
                                         </div>
-                                      );
-                                    })}
+                                    ))}
                                  </div>
                               </div>
                               
@@ -437,54 +481,73 @@ const Products: React.FC = () => {
               </div>
 
               <div className="space-y-4 md:space-y-6 pt-4 md:pt-6 border-t border-slate-100">
-                <h3 className="text-[9px] md:text-[10px] font-black text-indigo-400 uppercase tracking-widest">Vendor Mapping</h3>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-10">
-                   <div className="p-4 md:p-6 bg-slate-50 rounded-2xl md:rounded-[32px] space-y-3 md:space-y-4 border-2 border-transparent focus-within:border-indigo-200 transition-all">
-                      <div className="flex items-center gap-2 mb-2">
-                         <div className="w-5 h-5 md:w-6 md:h-6 rounded-full bg-indigo-600 text-white flex items-center justify-center text-[9px] md:text-[10px] font-black">P</div>
-                         <span className="text-[10px] md:text-xs font-black text-slate-900 uppercase tracking-wider md:tracking-widest">Primary Vendor</span>
-                      </div>
-                      <div>
-                        <select name="primaryVendorId" value={formData.primaryVendorId} onChange={handleInputChange} className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-bold bg-white" required>
-                          <option value="">-- Choose Vendor --</option>
-                          {vendors.map(s => (
-                            <option key={s.id} value={s.id}>{s.name}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">Price per piece (PKR)*</label>
-                        <input name="primaryPrice" value={formData.primaryPrice} onChange={handleInputChange} type="number" step="0.001" className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-bold bg-white" placeholder="0.00" required />
-                      </div>
-                   </div>
-
-                   <div className="p-4 md:p-6 bg-slate-50 rounded-2xl md:rounded-[32px] space-y-3 md:space-y-4 border-2 border-transparent focus-within:border-slate-200 transition-all">
-                      <div className="flex items-center gap-2 mb-2">
-                         <div className="w-5 h-5 md:w-6 md:h-6 rounded-full bg-slate-400 text-white flex items-center justify-center text-[9px] md:text-[10px] font-black">S</div>
-                         <span className="text-[10px] md:text-xs font-black text-slate-400 uppercase tracking-wider md:tracking-widest">Secondary Vendor</span>
-                      </div>
-                      <div>
-                        <select name="secondaryVendorId" value={formData.secondaryVendorId} onChange={handleInputChange} className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-bold bg-white">
-                          <option value="">None</option>
-                          {vendors
-                            .filter(s => s.id !== formData.primaryVendorId)
-                            .map(s => (
-                              <option key={s.id} value={s.id}>{s.name}</option>
-                            ))}
-                        </select>
-                      </div>
-                      <div>
-                        <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">Price per piece (PKR)</label>
-                        <input name="secondaryPrice" value={formData.secondaryPrice} onChange={handleInputChange} type="number" step="0.001" className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-bold bg-white" placeholder="0.00" />
-                      </div>
-                   </div>
+                <div>
+                  <h3 className="text-[9px] md:text-[10px] font-black text-indigo-400 uppercase tracking-widest">Suppliers and Prices*</h3>
+                  <p className="text-xs text-slate-500 mt-1">Add at least one supplier. Each price is per piece and applies from its start date. Add older prices too if you have them.</p>
                 </div>
+
+                {supplierDrafts.map((d, idx) => (
+                  <div key={idx} className="p-4 md:p-6 bg-slate-50 rounded-2xl md:rounded-[32px] space-y-3 border-2 border-transparent focus-within:border-indigo-200 transition-all">
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={d.vendorId}
+                        onChange={e => { const v = e.target.value; if (mainVendorId === d.vendorId) setMainVendorId(''); updateSupplierDraft(idx, x => ({ ...x, vendorId: v })); }}
+                        className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-bold bg-white flex-1"
+                      >
+                        <option value="">-- Choose Supplier --</option>
+                        {vendors
+                          .filter(v => v.id === d.vendorId || !supplierDrafts.some(o => o.vendorId === v.id))
+                          .map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+                      </select>
+                      {supplierDrafts.length > 1 && (
+                        <button type="button" onClick={() => { if (mainVendorId === d.vendorId) setMainVendorId(''); setSupplierDrafts(prev => prev.filter((_, i) => i !== idx)); }} className="px-3 py-2.5 text-xs font-bold text-slate-500 hover:text-red-600">Remove</button>
+                      )}
+                    </div>
+                    <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
+                      <input type="radio" name="mainSupplier" disabled={!d.vendorId} checked={!!d.vendorId && mainVendorId === d.vendorId} onChange={() => setMainVendorId(d.vendorId)} />
+                      Main supplier
+                    </label>
+                    <div className="space-y-2">
+                      {d.prices.map((r, pIdx) => (
+                        <div key={pIdx} className="grid grid-cols-2 md:grid-cols-[1fr_1fr_2fr_auto] gap-2 items-end">
+                          <div>
+                            <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">Price per piece (PKR)*</label>
+                            <input type="number" step="0.001" min="0" value={r.price} placeholder="0.00" className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-bold bg-white"
+                              onChange={e => updateSupplierDraft(idx, x => ({ ...x, prices: x.prices.map((pr, i) => i === pIdx ? { ...pr, price: e.target.value } : pr) }))} />
+                          </div>
+                          <div>
+                            <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">Starts on*</label>
+                            <input type="date" value={r.effectiveDate} className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-bold bg-white"
+                              onChange={e => updateSupplierDraft(idx, x => ({ ...x, prices: x.prices.map((pr, i) => i === pIdx ? { ...pr, effectiveDate: e.target.value } : pr) }))} />
+                          </div>
+                          <div className="col-span-2 md:col-span-1">
+                            <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">Note</label>
+                            <input type="text" value={r.note} placeholder="Optional" className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-bold bg-white"
+                              onChange={e => updateSupplierDraft(idx, x => ({ ...x, prices: x.prices.map((pr, i) => i === pIdx ? { ...pr, note: e.target.value } : pr) }))} />
+                          </div>
+                          {d.prices.length > 1 ? (
+                            <button type="button" onClick={() => updateSupplierDraft(idx, x => ({ ...x, prices: x.prices.filter((_, i) => i !== pIdx) }))} className="px-2 py-2.5 text-xs font-bold text-slate-400 hover:text-red-600">Remove</button>
+                          ) : <span />}
+                        </div>
+                      ))}
+                    </div>
+                    <button type="button" onClick={() => updateSupplierDraft(idx, x => ({ ...x, prices: [...x.prices, emptyPriceRow()] }))} className="text-xs font-black text-indigo-600 hover:underline">+ Add price</button>
+                  </div>
+                ))}
+
+                {supplierDrafts.length < vendors.length && (
+                  <button type="button" onClick={() => setSupplierDrafts(prev => [...prev, emptySupplierDraft()])} className="text-xs font-black text-indigo-600 hover:underline">+ Add another supplier</button>
+                )}
+                {mainVendorId === ''
+                  ? <p className="text-[11px] text-slate-400">No main supplier chosen. That is allowed.</p>
+                  : <button type="button" onClick={() => setMainVendorId('')} className="block text-[11px] font-bold text-slate-400 hover:underline">Clear main supplier</button>}
               </div>
+
+              {formError && <div className="p-3 rounded-xl bg-red-50 text-red-700 text-sm font-bold">{formError}</div>}
 
               <div className="flex flex-col sm:flex-row justify-end gap-3 md:gap-4 pt-6 md:pt-10 border-t border-slate-100">
                 <button type="button" onClick={() => setShowAddModal(false)} className="px-6 md:px-8 py-3 md:py-4 rounded-xl md:rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors uppercase tracking-widest text-[10px] order-2 sm:order-1">Discard</button>
-                <button type="submit" className="px-8 md:px-12 py-3 md:py-4 rounded-xl md:rounded-2xl font-black text-white bg-indigo-600 hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 uppercase tracking-widest text-[10px] order-1 sm:order-2">Save Product</button>
+                <button type="submit" disabled={saving} className="px-8 md:px-12 py-3 md:py-4 rounded-xl md:rounded-2xl font-black text-white bg-indigo-600 hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 uppercase tracking-widest text-[10px] order-1 sm:order-2 disabled:opacity-50">{saving ? 'Saving...' : 'Save Product'}</button>
               </div>
             </form>
           </div>
