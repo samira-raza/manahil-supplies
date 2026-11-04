@@ -16,6 +16,7 @@ const ProductDetail: React.FC = () => {
   const [metadataRequireChange, setMetadataRequireChange] = useState(false);
   const [showPricingModal, setShowPricingModal] = useState(false);
   const [duplicating, setDuplicating] = useState(false);
+  const [showAllDeliveries, setShowAllDeliveries] = useState(false);
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -66,8 +67,8 @@ const ProductDetail: React.FC = () => {
   const secondaryVendor = vendors.find(s => s.id === product.secondaryVendorId);
   const relatedProducts = (product.relatedProductIds || []).map((rid: string) => products.find(p => p.id === rid)).filter(Boolean);
 
-  // Last 10 deliveries
-  const lastDeliveries = productDeliveries.slice(0, 10);
+  // Last 10 deliveries, or all of them when extended history is shown
+  const lastDeliveries = showAllDeliveries ? productDeliveries : productDeliveries.slice(0, 10);
 
   return (
     <div className="space-y-4 md:space-y-8 animate-in slide-in-from-right-4 duration-500">
@@ -187,11 +188,15 @@ const ProductDetail: React.FC = () => {
             <div className="p-4 md:p-8 border-b border-slate-50 bg-slate-50/30 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
                <div>
                  <h3 className="text-base md:text-lg font-black text-slate-900 flex items-center gap-2">
-                   <Icons.Delivery /> Last 10 Shipments
+                   <Icons.Delivery /> {showAllDeliveries ? `All Shipments (${productDeliveries.length})` : 'Last 10 Shipments'}
                  </h3>
                  <p className="text-[10px] md:text-xs text-slate-500 font-medium mt-1">Physical inventory movement audit</p>
                </div>
-               <button className="text-[10px] font-black text-indigo-600 hover:underline uppercase tracking-widest self-start sm:self-auto shrink-0">Pull Extended History</button>
+               {productDeliveries.length > 10 && (
+                 <button onClick={() => setShowAllDeliveries(v => !v)} className="text-[10px] font-black text-indigo-600 hover:underline uppercase tracking-widest self-start sm:self-auto shrink-0">
+                   {showAllDeliveries ? 'Show Last 10 Only' : 'Pull Extended History'}
+                 </button>
+               )}
             </div>
 
             {/* Mobile card view */}
