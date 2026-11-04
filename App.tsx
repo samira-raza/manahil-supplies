@@ -129,11 +129,13 @@ const useCRMStore = () => {
     loadAll();
   }, []);
 
-  // Persist current user session to localStorage
+  // Persist current user session to localStorage.
+  // Skipped while loading, so the saved session isn't cleared before loadAll restores it.
   useEffect(() => {
+    if (loading) return;
     if (currentUser) localStorage.setItem('packtrack_current_user_id', currentUser.id);
     else localStorage.removeItem('packtrack_current_user_id');
-  }, [currentUser]);
+  }, [currentUser, loading]);
 
   const recalculateOrderStatuses = async (currentOrders: Order[], currentDeliveries: Delivery[]): Promise<Order[]> => {
     const updated = currentOrders.map(order => ({
