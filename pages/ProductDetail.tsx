@@ -287,21 +287,25 @@ const ProductDetail: React.FC = () => {
           product={product}
           vendors={vendors}
           onClose={() => setShowPricingModal(false)}
-          onSave={(vendorId, newPrice) => {
+          onSave={async (vendorId, newPrice) => {
             const today = new Date().toISOString().split('T')[0];
-            setProducts(prev => prev.map(p => {
-              if (p.id !== id) return p;
-              const updatedHistory = { ...p.priceHistory };
-              const vendorHistory = updatedHistory[vendorId] || [];
-              updatedHistory[vendorId] = [...vendorHistory, { price: newPrice, date: today }];
+            const updatedHistory = { ...product.priceHistory };
+            const vendorHistory = updatedHistory[vendorId] || [];
+            updatedHistory[vendorId] = [...vendorHistory, { price: newPrice, date: today }];
 
-              const isPrimary = vendorId === p.primaryVendorId;
-              return {
-                ...p,
-                ...(isPrimary ? { primaryPrice: newPrice } : { secondaryPrice: newPrice }),
-                priceHistory: updatedHistory
-              };
-            }));
+            const isPrimary = vendorId === product.primaryVendorId;
+            const updated = {
+              ...product,
+              ...(isPrimary ? { primaryPrice: newPrice } : { secondaryPrice: newPrice }),
+              priceHistory: updatedHistory
+            };
+
+            const { error } = await db.upsertProduct(updated);
+            if (error) {
+              alert(`Price was not saved: ${error.message}`);
+              return;
+            }
+            setProducts(prev => prev.map(p => p.id === id ? updated : p));
             setShowPricingModal(false);
           }}
         />
