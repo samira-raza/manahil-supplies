@@ -39,6 +39,9 @@ const Orders: React.FC = () => {
   if (!ctx) return null;
   const { orders, setOrders, products, currentUser, deliveries, categories, buyers, vendors, dispatchBucket, setDispatchBucket } = ctx;
 
+  const sizeOf = (p?: { unitSize?: string; measuringUnit?: string }) =>
+    p?.unitSize ? `${p.unitSize}${p.measuringUnit ? ` ${p.measuringUnit}` : ''}` : '';
+
   // Derive the expanded order from orders state so it always stays in sync
   const expandedOrder = expandedOrderId ? orders.find(o => o.id === expandedOrderId) || null : null;
 
@@ -545,7 +548,7 @@ const Orders: React.FC = () => {
                         className="w-full px-4 py-3 rounded-xl border-none bg-white/10 text-white outline-none text-sm font-bold backdrop-blur-md disabled:cursor-not-allowed"
                       >
                          <option value="" className="text-slate-900">-- Choose Item --</option>
-                         {filteredVendorProducts.map(p => <option key={p.id} value={p.id} className="text-slate-900">{p.title}</option>)}
+                         {filteredVendorProducts.map(p => <option key={p.id} value={p.id} className="text-slate-900">{p.title}{sizeOf(p) ? ` (${sizeOf(p)})` : ''}</option>)}
                       </select>
                    </div>
                    <div>
@@ -581,6 +584,7 @@ const Orders: React.FC = () => {
                        <div key={idx} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 md:p-6 bg-slate-50 border border-slate-100 rounded-2xl md:rounded-[24px] hover:border-indigo-200 transition-all group/item gap-3">
                           <div className="flex-1 min-w-0">
                              <div className="font-black text-slate-900 text-sm truncate">{p?.title}</div>
+                             {sizeOf(p) && <div className="text-[10px] text-slate-600 font-bold mt-0.5">{sizeOf(p)}</div>}
                              <div className="text-[9px] text-slate-400 font-bold uppercase mt-1">{p?.category}</div>
                           </div>
                           <div className="flex items-center gap-4 md:gap-6">

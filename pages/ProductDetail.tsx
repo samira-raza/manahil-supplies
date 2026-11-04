@@ -70,6 +70,7 @@ const ProductDetail: React.FC = () => {
 
   // Last 10 deliveries, or all of them when extended history is shown
   const lastDeliveries = showAllDeliveries ? productDeliveries : productDeliveries.slice(0, 10);
+  const sizeLabel = product.unitSize ? `${product.unitSize}${product.measuringUnit ? ` ${product.measuringUnit}` : ''}` : '';
 
   return (
     <div className="space-y-4 md:space-y-8 animate-in slide-in-from-right-4 duration-500">
@@ -80,6 +81,7 @@ const ProductDetail: React.FC = () => {
           </button>
           <div className="min-w-0">
             <h1 className="text-lg md:text-2xl font-black text-slate-900 leading-tight tracking-tight break-words">{product.title}</h1>
+            {sizeLabel && <p className="text-slate-600 text-xs md:text-sm font-bold mt-1">{sizeLabel}</p>}
             <p className="text-slate-500 text-xs md:text-sm font-medium mt-1">Added: {product.dateAdded}</p>
           </div>
         </div>
