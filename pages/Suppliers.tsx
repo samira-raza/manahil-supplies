@@ -3,6 +3,7 @@ import React, { useContext, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CRMContext, generateId } from '../App';
 import { UserRole, Vendor, BankAccount, ChallanStatus } from '../types';
+import { deliveryLine } from '../services/pricing';
 import { Icons } from '../constants';
 import { db } from '../services/db';
 
@@ -24,7 +25,7 @@ const Vendors: React.FC = () => {
   });
 
   if (!ctx) return null;
-  const { vendors, setVendors, currentUser, products, deliveries, payments } = ctx;
+  const { vendors, setVendors, currentUser, products, deliveries, payments, orders } = ctx;
 
   const isSuperAdmin = currentUser?.role === UserRole.SUPER_ADMIN;
   const isAdmin = currentUser?.role === UserRole.ADMIN;
@@ -48,11 +49,8 @@ const Vendors: React.FC = () => {
       .reduce((sum, d) => {
         const dValue = d.items.reduce((iSum, item) => {
           if ((item.itemStatus || ChallanStatus.ACTIVE) !== ChallanStatus.ACTIVE) return iSum;
-          const prod = products.find(p => p.id === item.productId);
-          if (prod?.primaryVendorId === vendorId) {
-            return iSum + (item.quantity * (prod.primaryPrice || 0));
-          }
-          return iSum;
+          const line = deliveryLine(item, orders, products);
+          return line.vendorId === vendorId ? iSum + line.value : iSum;
         }, 0);
         return sum + dValue;
       }, 0);

@@ -2,7 +2,8 @@
 import React, { useContext, useState, useMemo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { CRMContext, generateId } from '../App';
-import { UserRole, Vendor, Product, BankAccount, Payment, Order, Delivery, DeliveryStatus, ChallanStatus } from '../types';
+import { UserRole, Vendor, Product, BankAccount, Payment, Order, Delivery, DeliveryItem, DeliveryStatus, ChallanStatus } from '../types';
+import { deliveryLine } from '../services/pricing';
 import { Icons } from '../constants';
 import { db } from '../services/db';
 
@@ -52,6 +53,9 @@ const VendorDetail: React.FC = () => {
   const canAddVendors = isSuperAdmin || isAdmin;
   const canEditPayments = isSuperAdmin;
 
+  // A delivered line belongs to this supplier when its order was placed with them
+  const isMine = (item: DeliveryItem) => deliveryLine(item, orders, products).vendorId === vendor.id;
+
   // Financial breakdown
   const getFinancials = () => {
     const openingBalance = vendor.openingBalance || 0;
@@ -59,20 +63,13 @@ const VendorDetail: React.FC = () => {
     const activeStatuses = [ChallanStatus.ACTIVE, ChallanStatus.PARTIAL_RETURNED];
     const supplierDeliveries = deliveries.filter(d =>
       activeStatuses.includes(d.challanStatus || ChallanStatus.ACTIVE) &&
-      d.items.some(di => {
-        const prod = products.find(p => p.id === di.productId);
-        return prod?.primaryVendorId === vendor.id;
-      })
+      d.items.some(di => isMine(di))
     );
 
     const totalDeliveredValue = supplierDeliveries.reduce((sum, d) => {
       const dValue = d.items.reduce((iSum, item) => {
         if ((item.itemStatus || ChallanStatus.ACTIVE) !== ChallanStatus.ACTIVE) return iSum;
-        const prod = products.find(p => p.id === item.productId);
-        if (prod?.primaryVendorId === vendor.id) {
-          return iSum + (item.quantity * (prod.primaryPrice || 0));
-        }
-        return iSum;
+        return isMine(item) ? iSum + deliveryLine(item, orders, products).value : iSum;
       }, 0);
       return sum + dValue;
     }, 0);
@@ -92,9 +89,7 @@ const VendorDetail: React.FC = () => {
       if (dDate <= fortyFiveDaysAgo) {
         const dValue = d.items.reduce((iSum, item) => {
           if ((item.itemStatus || ChallanStatus.ACTIVE) !== ChallanStatus.ACTIVE) return iSum;
-          const prod = products.find(p => p.id === item.productId);
-          if (prod?.primaryVendorId === vendor.id) return iSum + (item.quantity * (prod.primaryPrice || 0));
-          return iSum;
+          return isMine(item) ? iSum + deliveryLine(item, orders, products).value : iSum;
         }, 0);
         return sum + dValue;
       }
@@ -110,8 +105,7 @@ const VendorDetail: React.FC = () => {
       if (!monthlyData[month]) monthlyData[month] = { sales: 0, payments: 0 };
       const dVal = d.items.reduce((iSum, item) => {
         if ((item.itemStatus || ChallanStatus.ACTIVE) !== ChallanStatus.ACTIVE) return iSum;
-        const prod = products.find(p => p.id === item.productId);
-        return prod?.primaryVendorId === vendor.id ? iSum + (item.quantity * (prod.primaryPrice || 0)) : iSum;
+        return isMine(item) ? iSum + deliveryLine(item, orders, products).value : iSum;
       }, 0);
       monthlyData[month].sales += dVal;
     });
@@ -167,10 +161,7 @@ const VendorDetail: React.FC = () => {
   };
 
   const vendorDeliveries = deliveries
-    .filter(d => d.items.some(di => {
-      const prod = products.find(p => p.id === di.productId);
-      return prod?.primaryVendorId === vendor.id;
-    }))
+    .filter(d => d.items.some(di => isMine(di)))
     .sort((a, b) => new Date(b.deliveryDate).getTime() - new Date(a.deliveryDate).getTime());
 
   const vendorPaymentsList = payments.filter(p => p.vendorId === vendor.id).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -296,14 +287,11 @@ const VendorDetail: React.FC = () => {
               {vendorDeliveries.length === 0 ? (
                 <tr><td colSpan={7} className="px-4 md:px-6 py-8 text-center text-slate-400 text-xs italic">No delivery records found for this vendor.</td></tr>
               ) : vendorDeliveries.map(d => {
-                const relevantItems = d.items.filter(di => {
-                  const prod = products.find(p => p.id === di.productId);
-                  return prod?.primaryVendorId === vendor.id;
-                });
+                const relevantItems = d.items.filter(di => isMine(di));
                 return relevantItems.map((item, idx) => {
                   const prod = products.find(p => p.id === item.productId);
                   const itemActive = (item.itemStatus || ChallanStatus.ACTIVE) === ChallanStatus.ACTIVE;
-                  const lineValue = itemActive ? item.quantity * (prod?.primaryPrice || 0) : 0;
+                  const lineValue = itemActive ? deliveryLine(item, orders, products).value : 0;
                   const linkedOrder = orders.find(o => o.orderNumber === item.orderNumber);
                   return (
                     <tr key={`${d.id}-${idx}`} className={`hover:bg-slate-50/80 transition-all ${!itemActive ? 'opacity-60' : ''}`}>
