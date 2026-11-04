@@ -519,7 +519,7 @@ const PricingModal: React.FC<{
           </div>
 
           <div>
-            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">New Price (PKR)*</label>
+            <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">New Price per piece (PKR)*</label>
             <input
               type="number"
               step="0.001"

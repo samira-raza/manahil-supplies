@@ -454,7 +454,7 @@ const Products: React.FC = () => {
                         </select>
                       </div>
                       <div>
-                        <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">Unit Price (PKR)*</label>
+                        <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">Price per piece (PKR)*</label>
                         <input name="primaryPrice" value={formData.primaryPrice} onChange={handleInputChange} type="number" step="0.001" className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-bold bg-white" placeholder="0.00" required />
                       </div>
                    </div>
@@ -475,7 +475,7 @@ const Products: React.FC = () => {
                         </select>
                       </div>
                       <div>
-                        <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">Unit Price (PKR)</label>
+                        <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">Price per piece (PKR)</label>
                         <input name="secondaryPrice" value={formData.secondaryPrice} onChange={handleInputChange} type="number" step="0.001" className="w-full px-4 py-3 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-bold bg-white" placeholder="0.00" />
                       </div>
                    </div>
