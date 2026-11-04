@@ -3,7 +3,7 @@ import React, { useContext, useEffect, useMemo, useState } from 'react';
 import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
 import { CRMContext, generateId } from '../App';
 import { Icons } from '../constants';
-import { PriceRecord } from '../types';
+import { PriceRecord, UserRole } from '../types';
 import { db } from '../services/db';
 
 const ProductDetail: React.FC = () => {
@@ -35,7 +35,8 @@ const ProductDetail: React.FC = () => {
   }, [ctx?.deliveries, id]);
 
   if (!ctx || !id) return null;
-  const { products, setProducts, vendors, measuringUnits } = ctx;
+  const { products, setProducts, vendors, measuringUnits, currentUser } = ctx;
+  const canManageProduct = currentUser?.role === UserRole.SUPER_ADMIN || currentUser?.role === UserRole.ADMIN;
 
   const product = products.find(p => p.id === id);
   if (!product) {
@@ -82,13 +83,13 @@ const ProductDetail: React.FC = () => {
             <p className="text-slate-500 text-xs md:text-sm font-medium mt-1">Added: {product.dateAdded}</p>
           </div>
         </div>
-        <div className="flex gap-2 md:gap-3">
+        {canManageProduct && <div className="flex gap-2 md:gap-3">
           <button onClick={handleDuplicate} disabled={duplicating} className="flex-1 md:flex-none px-4 md:px-5 py-2.5 md:py-3 bg-white border border-slate-200 rounded-xl font-semibold text-slate-600 hover:bg-amber-50 hover:border-amber-300 hover:text-amber-600 transition-all shadow-sm text-sm disabled:opacity-50">
             {duplicating ? 'Duplicating...' : 'Duplicate'}
           </button>
           <button onClick={() => { setMetadataRequireChange(false); setShowMetadataModal(true); }} className="flex-1 md:flex-none px-4 md:px-5 py-2.5 md:py-3 bg-white border border-slate-200 rounded-xl font-semibold text-slate-600 hover:bg-slate-50 transition-all shadow-sm text-sm">Edit Info</button>
           <button onClick={() => setShowPricingModal(true)} className="flex-1 md:flex-none px-4 md:px-5 py-2.5 md:py-3 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 text-sm">Update Price</button>
-        </div>
+        </div>}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-8">
