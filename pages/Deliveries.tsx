@@ -1,5 +1,5 @@
 
-import React, { useContext, useState, useMemo } from 'react';
+import React, { useContext, useState } from 'react';
 import { CRMContext, generateId } from '../App';
 import { UserRole, Delivery, DeliveryStatus, ChallanStatus, Product } from '../types';
 import { db } from '../services/db';
@@ -64,7 +64,8 @@ const Deliveries: React.FC = () => {
     return matchesSearch && matchesOrder && matchesVendor;
   });
 
-  const activeOrders = useMemo(() => {
+  // Plain calculation (not a hook) because it runs after the early return above
+  const activeOrders = (() => {
     return orders.filter(o => {
       if (isSupplierRole) {
         const isPart = o.items.some(i => {
@@ -75,7 +76,7 @@ const Deliveries: React.FC = () => {
       }
       return true;
     });
-  }, [orders, isSupplierRole, mySupplierId, products]);
+  })();
 
   const handleOrderChange = (orderNo: string) => {
     setSelectedOrderNo(orderNo);

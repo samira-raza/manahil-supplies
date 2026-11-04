@@ -25,8 +25,16 @@ const ProductDetail: React.FC = () => {
     }
   }, [id, location.search]);
 
+  // All deliveries of this product, newest first (kept above the early returns so hook order never changes)
+  const productDeliveries = useMemo(() => {
+    if (!ctx || !id) return [];
+    return ctx.deliveries
+      .filter(d => d.items.some(item => item.productId === id))
+      .sort((a, b) => new Date(b.deliveryDate).getTime() - new Date(a.deliveryDate).getTime());
+  }, [ctx?.deliveries, id]);
+
   if (!ctx || !id) return null;
-  const { products, setProducts, vendors, deliveries, orders, measuringUnits } = ctx;
+  const { products, setProducts, vendors, measuringUnits } = ctx;
 
   const product = products.find(p => p.id === id);
   if (!product) {
@@ -58,13 +66,8 @@ const ProductDetail: React.FC = () => {
   const secondaryVendor = vendors.find(s => s.id === product.secondaryVendorId);
   const relatedProducts = (product.relatedProductIds || []).map((rid: string) => products.find(p => p.id === rid)).filter(Boolean);
 
-  // Get last 10 deliveries
-  const lastDeliveries = useMemo(() => {
-    return deliveries
-      .filter(d => d.items.some(item => item.productId === id))
-      .sort((a, b) => new Date(b.deliveryDate).getTime() - new Date(a.deliveryDate).getTime())
-      .slice(0, 10);
-  }, [deliveries, id]);
+  // Last 10 deliveries
+  const lastDeliveries = productDeliveries.slice(0, 10);
 
   return (
     <div className="space-y-4 md:space-y-8 animate-in slide-in-from-right-4 duration-500">

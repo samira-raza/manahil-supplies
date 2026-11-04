@@ -26,6 +26,16 @@ const Orders: React.FC = () => {
   // Staging state for the item current UI (temporary until "Add to Bucket")
   const [stagedInputs, setStagedInputs] = useState<Record<string, { qty: number, status: DeliveryStatus }>>({});
 
+  // Hooks stay above the early return so hook order never changes between renders
+  const filteredVendorProducts = useMemo(() => {
+    if (!selectedVendorId || !ctx) return [];
+    return ctx.products.filter(p => p.primaryVendorId === selectedVendorId || p.secondaryVendorId === selectedVendorId);
+  }, [selectedVendorId, ctx?.products]);
+
+  const totalOrderValue = useMemo(() => {
+    return cart.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
+  }, [cart]);
+
   if (!ctx) return null;
   const { orders, setOrders, products, currentUser, deliveries, categories, buyers, vendors, dispatchBucket, setDispatchBucket } = ctx;
 
@@ -39,12 +49,6 @@ const Orders: React.FC = () => {
   const canCreateOrders = isSuperAdmin || isAdmin; // Only super admin and admin can create orders
   const canStageDispatch = isSuperAdmin || isAdmin; // Only super admin and admin can stage dispatch
   const myVendorId = currentUser?.vendorId;
-
-  // Filter products for the selected supplier
-  const filteredVendorProducts = useMemo(() => {
-    if (!selectedVendorId) return [];
-    return products.filter(p => p.primaryVendorId === selectedVendorId || p.secondaryVendorId === selectedVendorId);
-  }, [selectedVendorId, products]);
 
   const getStatusBadge = (status: DeliveryStatus) => {
     switch (status) {
@@ -108,10 +112,6 @@ const Orders: React.FC = () => {
   const removeFromCart = (index: number) => {
     setCart(prev => prev.filter((_, i) => i !== index));
   };
-
-  const totalOrderValue = useMemo(() => {
-    return cart.reduce((sum, item) => sum + (item.quantity * item.unitPrice), 0);
-  }, [cart]);
 
   const handleCreateOrder = async () => {
     if (isSubmitDisabled) return;

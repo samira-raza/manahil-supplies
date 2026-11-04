@@ -17,9 +17,6 @@ const Products: React.FC = () => {
   const [filterCategory, setFilterCategory] = useState('');
   const [filterVendor, setFilterVendor] = useState('');
 
-  if (!ctx) return null;
-  const { products, setProducts, vendors, currentUser, categories, measuringUnits, deliveries, orders } = ctx;
-
   // Form State
   const [formData, setFormData] = useState({
     brand: '',
@@ -48,10 +45,14 @@ const Products: React.FC = () => {
   }, [formData]);
 
   useEffect(() => {
+    const categories = ctx?.categories || [];
     if (showAddModal && categories.length > 0 && !formData.category) {
       setFormData(prev => ({ ...prev, category: categories[0].name }));
     }
-  }, [showAddModal, categories]);
+  }, [showAddModal, ctx?.categories]);
+
+  if (!ctx) return null;
+  const { products, setProducts, vendors, currentUser, categories, measuringUnits, deliveries } = ctx;
 
   const isSuperAdmin = currentUser?.role === UserRole.SUPER_ADMIN;
   const isAdmin = currentUser?.role === UserRole.ADMIN;
