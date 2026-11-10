@@ -1,21 +1,25 @@
 
 import React, { useContext, useState, useEffect, useMemo } from 'react';
 import { CRMContext, generateId } from '../App';
-import { Product, ProductSupplier, UserRole } from '../types';
+import { Product, ProductActivity, ProductSupplier, UserRole } from '../types';
 import { Icons } from '../constants';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { db } from '../services/db';
-import { localToday, mainSupplier, orderedSuppliers, priceOn, sortPrices, hasSupplier, deliveryLine } from '../services/pricing';
+import { localToday, mainSupplier, activeSuppliers, orderedSuppliers, priceOn, sortPrices, hasSupplier, deliveryLine } from '../services/pricing';
 import { productPermissions } from '../services/permissions';
 
 // One supplier on the Create Product form, with one or more dated prices
 type SupplierDraft = { vendorId: string; prices: { price: string; effectiveDate: string; note: string }[] };
 const emptyPriceRow = () => ({ price: '', effectiveDate: localToday(), note: '' });
 const emptySupplierDraft = (): SupplierDraft => ({ vendorId: '', prices: [emptyPriceRow()] });
+// "[COPY]" is added to a copy's description as a reminder (saving is allowed without removing it)
+const withCopyTag = (desc?: string) => (desc || '').includes('[COPY]') ? (desc || '') : (desc ? `${desc} [COPY]` : '[COPY]');
+const withoutCopyTag = (desc?: string) => (desc || '').replace(/\s*\[COPY\]\s*/g, ' ').trim();
 
 const Products: React.FC = () => {
   const ctx = useContext(CRMContext);
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchTerm, setSearchTerm] = useState('');
   const [showAddModal, setShowAddModal] = useState(false);
   const [expandedProductId, setExpandedProductId] = useState<string | null>(null);
@@ -42,6 +46,12 @@ const Products: React.FC = () => {
   const [formError, setFormError] = useState('');
   const [saving, setSaving] = useState(false);
 
+  // Duplicate mode: the form is filled in from an existing product
+  const [duplicateOf, setDuplicateOf] = useState<Product | null>(null);
+  const [copyLinks, setCopyLinks] = useState<string[]>([]);
+  const [whatsDifferent, setWhatsDifferent] = useState('');
+  const [priceWarning, setPriceWarning] = useState('');
+
   // Auto-generate display name
   const generatedTitle = useMemo(() => {
     const parts = [
@@ -59,6 +69,40 @@ const Products: React.FC = () => {
       setFormData(prev => ({ ...prev, category: categories[0].name }));
     }
   }, [showAddModal, ctx?.categories]);
+
+  // Opened from a product's Duplicate button: fill the form from that product
+  useEffect(() => {
+    const sourceId = (location.state as any)?.duplicateFrom;
+    if (!sourceId || !ctx) return;
+    const original = ctx.products.find(p => p.id === sourceId);
+    // Clear the request so a page refresh or going back does not open the form again
+    navigate(location.pathname, { replace: true, state: null });
+    if (!original || !productPermissions(ctx.currentUser).createProducts) return;
+    const today = localToday();
+    setFormData({
+      brand: original.brand,
+      category: original.category,
+      itemName: original.itemName,
+      description: withCopyTag(original.description),
+      unitSize: original.unitSize || '',
+      measuringUnit: original.measuringUnit || '',
+      packing: original.packing || '',
+      relatedProductId: '',
+    });
+    // Same suppliers (stopped ones are left out) with today's price filled in, no price history
+    const active = activeSuppliers(original);
+    setSupplierDrafts(active.length > 0
+      ? active.map(s => ({ vendorId: s.vendorId, prices: [{ price: String(priceOn(s, today)), effectiveDate: today, note: '' }] }))
+      : [emptySupplierDraft()]);
+    setMainVendorId(mainSupplier(original)?.isActive ? mainSupplier(original)!.vendorId : '');
+    // Linked to the original and to everything the original is linked to
+    setCopyLinks([original.id, ...(original.relatedProductIds || []).filter(id => id !== original.id && ctx.products.some(p => p.id === id))]);
+    setWhatsDifferent('');
+    setPriceWarning('');
+    setFormError('');
+    setDuplicateOf(original);
+    setShowAddModal(true);
+  }, [location.state, ctx?.products]);
 
   if (!ctx) return null;
   const { products, setProducts, vendors, currentUser, categories, measuringUnits, deliveries } = ctx;
@@ -90,8 +134,10 @@ const Products: React.FC = () => {
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  const updateSupplierDraft = (idx: number, change: (d: SupplierDraft) => SupplierDraft) =>
+  const updateSupplierDraft = (idx: number, change: (d: SupplierDraft) => SupplierDraft) => {
+    setPriceWarning('');
     setSupplierDrafts(prev => prev.map((d, i) => i === idx ? change(d) : d));
+  };
 
   const resetForm = () => {
     setFormData({
@@ -107,6 +153,10 @@ const Products: React.FC = () => {
     setSupplierDrafts([emptySupplierDraft()]);
     setMainVendorId('');
     setFormError('');
+    setDuplicateOf(null);
+    setCopyLinks([]);
+    setWhatsDifferent('');
+    setPriceWarning('');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -135,6 +185,45 @@ const Products: React.FC = () => {
     }
 
     const today = localToday();
+    const nameOf = (vendorId: string) => vendors.find(v => v.id === vendorId)?.name || 'supplier';
+
+    // Extra rules for a copy (agreed 1 Nov 2026)
+    if (duplicateOf) {
+      if (!whatsDifferent.trim()) {
+        setFormError("Please fill in \"What's different from the original?\".");
+        return;
+      }
+      const originalPrice = (vendorId: string) => {
+        const s = activeSuppliers(duplicateOf).find(x => x.vendorId === vendorId);
+        return s ? priceOn(s, today) : undefined;
+      };
+      const infoChanged =
+        formData.brand !== duplicateOf.brand ||
+        formData.category !== duplicateOf.category ||
+        formData.itemName !== duplicateOf.itemName ||
+        withoutCopyTag(formData.description) !== withoutCopyTag(duplicateOf.description) ||
+        formData.unitSize !== (duplicateOf.unitSize || '') ||
+        formData.measuringUnit !== (duplicateOf.measuringUnit || '') ||
+        formData.packing !== (duplicateOf.packing || '');
+      const originalVendors = activeSuppliers(duplicateOf).map(s => s.vendorId).sort().join(',');
+      const suppliersChanged = drafts.map(d => d.vendorId).sort().join(',') !== originalVendors ||
+        mainVendorId !== (mainSupplier(duplicateOf)?.isActive ? mainSupplier(duplicateOf)!.vendorId : '');
+      const pricesChanged = drafts.some(d => {
+        const rows = d.prices.filter(r => r.price !== '');
+        return rows.length !== 1 || parseFloat(rows[0].price) !== originalPrice(d.vendorId);
+      });
+      if (!infoChanged && !suppliersChanged && !pricesChanged) {
+        setFormError('Nothing is different from the original yet. Change at least one detail or price before saving.');
+        return;
+      }
+      // Warn once if a price is the same as the original's; saving again continues
+      const samePrice = drafts.filter(d => d.prices.some(r => r.price !== '' && parseFloat(r.price) === originalPrice(d.vendorId)));
+      if (samePrice.length > 0 && !priceWarning) {
+        setPriceWarning(`These prices are the same as the original: ${samePrice.map(d => `${nameOf(d.vendorId)} PKR ${originalPrice(d.vendorId)!.toFixed(2)}`).join(', ')}. Check them, or press Save Copy again to keep them.`);
+        return;
+      }
+    }
+
     const now = new Date().toISOString();
     const productId = generateId();
     const suppliers: ProductSupplier[] = drafts.map(d => ({
@@ -167,19 +256,42 @@ const Products: React.FC = () => {
       suppliers,
       activity: [],
       dateAdded: today,
-      relatedProductIds: formData.relatedProductId ? [formData.relatedProductId] : [],
+      relatedProductIds: duplicateOf ? copyLinks : (formData.relatedProductId ? [formData.relatedProductId] : []),
     };
 
     setSaving(true);
     const { error } = await db.saveProductWithSuppliers(newProduct);
-    setSaving(false);
     if (error) {
+      setSaving(false);
       setFormError(`The product was not saved: ${error.message}`);
       return;
     }
+
+    // A copy records where it came from, what was copied over and what's different
+    if (duplicateOf) {
+      const titleOf = (pid: string) => products.find(p => p.id === pid)?.title || 'a deleted product';
+      const main = suppliers.find(s => s.isMain);
+      const entry: ProductActivity = {
+        id: generateId(),
+        productId,
+        type: 'COPIED_FROM',
+        details: `Copied from "${duplicateOf.title}". Copied over: brand, category, item name, description, size, unit, packing, ` +
+          `suppliers (${suppliers.map(s => nameOf(s.vendorId)).join(', ')}${main ? `; main: ${nameOf(main.vendorId)}` : ''}), ` +
+          `linked products (${copyLinks.length > 0 ? copyLinks.map(titleOf).join(', ') : 'none'}). ` +
+          `Price history was not copied; prices were entered for the copy. What's different: ${whatsDifferent.trim()}`,
+        userId: currentUser?.id,
+        userName: currentUser?.name,
+        at: new Date().toISOString(),
+      };
+      const { error: logError } = await db.insertProductActivity(entry);
+      if (!logError) newProduct.activity = [entry];
+    }
+    setSaving(false);
     setProducts(prev => [newProduct, ...prev]);
     setShowAddModal(false);
+    const wasCopy = !!duplicateOf;
     resetForm();
+    if (wasCopy) navigate(`/products/${productId}`);
   };
 
   // Latest delivery of this product (for vendors: their own deliveries only)
@@ -426,8 +538,8 @@ const Products: React.FC = () => {
           <div className="bg-white rounded-2xl md:rounded-[40px] w-full max-w-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 border border-slate-200 max-h-[95vh] flex flex-col">
             <div className="p-4 md:p-8 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center shrink-0">
               <div>
-                <h2 className="text-lg md:text-2xl font-black text-slate-900">Add Product</h2>
-                <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Inventory & vendor mapping</p>
+                <h2 className="text-lg md:text-2xl font-black text-slate-900">{duplicateOf ? 'Duplicate Product' : 'Add Product'}</h2>
+                <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">{duplicateOf ? `Copy of ${duplicateOf.title}` : 'Inventory & vendor mapping'}</p>
               </div>
               <button onClick={() => setShowAddModal(false)} className="p-2 md:p-3 hover:bg-slate-200 rounded-xl md:rounded-2xl transition-colors">
                 <svg className="w-5 h-5 md:w-6 md:h-6 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
@@ -443,6 +555,18 @@ const Products: React.FC = () => {
                       {generatedTitle || 'Awaiting Input...'}
                    </div>
                 </div>
+
+                {duplicateOf && (
+                  <div className="space-y-3">
+                    <div className="p-3 md:p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs md:text-sm font-medium">
+                      Everything is copied from the original except its price history. The prices below are the original's prices today: change any that are different. Change at least one thing before saving.
+                    </div>
+                    <div>
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">What's different from the original?*</label>
+                      <textarea value={whatsDifferent} onChange={e => setWhatsDifferent(e.target.value)} rows={2} className="w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm" placeholder="e.g. Same carton in 50x30x30" />
+                    </div>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
@@ -481,6 +605,27 @@ const Products: React.FC = () => {
                     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Packing</label>
                     <input name="packing" value={formData.packing} onChange={handleInputChange} type="text" className="w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm" placeholder="Optional, e.g. Bundle of 50" />
                   </div>
+                  {duplicateOf ? (
+                    <div className="md:col-span-2">
+                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Linked Products</label>
+                      <p className="text-xs text-slate-500 mb-2">The copy is linked to the original and to the original's linked products. Remove any you don't need.</p>
+                      <div className="flex flex-wrap gap-2 mb-2">
+                        {copyLinks.length === 0 && <span className="text-xs text-slate-400 italic">No linked products</span>}
+                        {copyLinks.map(lid => (
+                          <span key={lid} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-indigo-50 text-indigo-700 text-xs font-bold">
+                            {products.find(p => p.id === lid)?.title || 'Unknown product'}{lid === duplicateOf.id ? ' (original)' : ''}
+                            <button type="button" onClick={() => setCopyLinks(prev => prev.filter(x => x !== lid))} className="text-indigo-400 hover:text-red-600" aria-label="Remove link">✕</button>
+                          </span>
+                        ))}
+                      </div>
+                      <select value="" onChange={e => { const v = e.target.value; if (v) setCopyLinks(prev => [...prev, v]); }} className="w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm">
+                        <option value="">+ Add linked product</option>
+                        {products.filter(prod => !prod.isArchived && !copyLinks.includes(prod.id)).map(prod => (
+                          <option key={prod.id} value={prod.id}>{prod.title}</option>
+                        ))}
+                      </select>
+                    </div>
+                  ) : (
                   <div className="md:col-span-2">
                     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Link Related Product (e.g. Inner for this Master)</label>
                     <select name="relatedProductId" value={formData.relatedProductId} onChange={handleInputChange} className="w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm">
@@ -490,6 +635,7 @@ const Products: React.FC = () => {
                        ))}
                     </select>
                   </div>
+                  )}
                 </div>
               </div>
 
@@ -556,11 +702,12 @@ const Products: React.FC = () => {
                   : <button type="button" onClick={() => setMainVendorId('')} className="block text-[11px] font-bold text-slate-400 hover:underline">Clear main supplier</button>}
               </div>
 
+              {priceWarning && <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm font-bold">{priceWarning}</div>}
               {formError && <div className="p-3 rounded-xl bg-red-50 text-red-700 text-sm font-bold">{formError}</div>}
 
               <div className="flex flex-col sm:flex-row justify-end gap-3 md:gap-4 pt-6 md:pt-10 border-t border-slate-100">
                 <button type="button" onClick={() => setShowAddModal(false)} className="px-6 md:px-8 py-3 md:py-4 rounded-xl md:rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors uppercase tracking-widest text-[10px] order-2 sm:order-1">Discard</button>
-                <button type="submit" disabled={saving} className="px-8 md:px-12 py-3 md:py-4 rounded-xl md:rounded-2xl font-black text-white bg-indigo-600 hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 uppercase tracking-widest text-[10px] order-1 sm:order-2 disabled:opacity-50">{saving ? 'Saving...' : 'Save Product'}</button>
+                <button type="submit" disabled={saving} className="px-8 md:px-12 py-3 md:py-4 rounded-xl md:rounded-2xl font-black text-white bg-indigo-600 hover:bg-indigo-700 transition-all shadow-xl shadow-indigo-100 uppercase tracking-widest text-[10px] order-1 sm:order-2 disabled:opacity-50">{saving ? 'Saving...' : (duplicateOf ? 'Save Copy' : 'Save Product')}</button>
               </div>
             </form>
           </div>
