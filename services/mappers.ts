@@ -101,6 +101,9 @@ export const productFromDb = (row: any, supplierRows: any[] = [], priceRows: any
       if (Array.isArray(v)) return v;
       try { const p = JSON.parse(v); return Array.isArray(p) ? p : [v]; } catch { return [v]; }
     })(),
+    isArchived: row.is_archived === true,
+    archivedBy: row.archived_by || undefined,
+    archivedAt: row.archived_at || undefined,
   };
 };
 

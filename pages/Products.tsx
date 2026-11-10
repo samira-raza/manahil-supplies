@@ -23,6 +23,8 @@ const Products: React.FC = () => {
   // Filter states
   const [filterCategory, setFilterCategory] = useState('');
   const [filterVendor, setFilterVendor] = useState('');
+  // '' = all products (archived ones shown greyed), 'active', 'archived'
+  const [filterArchive, setFilterArchive] = useState('');
 
   // Form State
   const [formData, setFormData] = useState({
@@ -79,7 +81,8 @@ const Products: React.FC = () => {
       p.brand.toLowerCase().includes(searchTerm.toLowerCase());
     const matchesCategory = !filterCategory || p.category === filterCategory;
     const matchesVendor = !filterVendor || hasSupplier(p, filterVendor);
-    return matchesSearch && matchesCategory && matchesVendor;
+    const matchesArchive = !filterArchive || (filterArchive === 'archived' ? !!p.isArchived : !p.isArchived);
+    return matchesSearch && matchesCategory && matchesVendor && matchesArchive;
   });
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -248,9 +251,18 @@ const Products: React.FC = () => {
                 <option key={s.id} value={s.id}>{s.name}</option>
               ))}
             </select>}
-            {(filterCategory || filterVendor || searchTerm) && (
+            <select
+              value={filterArchive}
+              onChange={(e) => setFilterArchive(e.target.value)}
+              className="px-4 py-3 rounded-xl bg-white border border-slate-200 focus:ring-2 focus:ring-indigo-500 transition-all text-sm font-medium min-w-[140px]"
+            >
+              <option value="">All Products</option>
+              <option value="active">Active Only</option>
+              <option value="archived">Archived Only</option>
+            </select>
+            {(filterCategory || filterVendor || filterArchive || searchTerm) && (
               <button
-                onClick={() => { setFilterCategory(''); setFilterVendor(''); setSearchTerm(''); }}
+                onClick={() => { setFilterCategory(''); setFilterVendor(''); setFilterArchive(''); setSearchTerm(''); }}
                 className="px-4 py-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-medium transition-all"
               >
                 Clear
@@ -282,7 +294,7 @@ const Products: React.FC = () => {
 
                 return (
                   <React.Fragment key={p.id}>
-                    <tr className={`group transition-all ${isExpanded ? 'bg-indigo-50/20' : 'hover:bg-slate-50/80'}`}>
+                    <tr className={`group transition-all ${isExpanded ? 'bg-indigo-50/20' : 'hover:bg-slate-50/80'} ${p.isArchived ? 'opacity-50 grayscale' : ''}`}>
                       <td className="px-4 md:px-8 py-4 md:py-6">
                         <Link to={`/products/${p.id}`} className="block hover:text-indigo-600 transition-colors">
                           <div className="font-black text-slate-900 leading-tight text-sm md:text-base max-w-[200px] md:max-w-md group-hover:text-indigo-600 truncate md:whitespace-normal">{p.itemName || p.title}{p.packing ? ` - ${p.packing}` : ''}</div>
@@ -290,6 +302,7 @@ const Products: React.FC = () => {
                         <div className="flex items-center gap-1 md:gap-2 mt-1 md:mt-2 flex-wrap">
                            <span className="text-[8px] md:text-[9px] font-black px-1.5 md:px-2 py-0.5 rounded bg-slate-900 text-white uppercase">{p.brand}</span>
                            <span className="text-[8px] md:text-[9px] font-black px-1.5 md:px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 uppercase">{p.category}</span>
+                           {p.isArchived && <span className="text-[8px] md:text-[9px] font-black px-1.5 md:px-2 py-0.5 rounded bg-slate-300 text-slate-700 uppercase">Archived</span>}
                         </div>
                       </td>
                       <td className="px-4 md:px-8 py-4 md:py-6">
@@ -472,7 +485,7 @@ const Products: React.FC = () => {
                     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Link Related Product (e.g. Inner for this Master)</label>
                     <select name="relatedProductId" value={formData.relatedProductId} onChange={handleInputChange} className="w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm">
                        <option value="">No link</option>
-                       {products.map(prod => (
+                       {products.filter(prod => !prod.isArchived).map(prod => (
                          <option key={prod.id} value={prod.id}>{prod.title}</option>
                        ))}
                     </select>

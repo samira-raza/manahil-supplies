@@ -20,6 +20,8 @@ const ProductDetail: React.FC = () => {
   const [supplierDialog, setSupplierDialog] = useState<{ replace?: ProductSupplier } | null>(null);
   const [stopMainDialog, setStopMainDialog] = useState<ProductSupplier | null>(null);
   const [deletePriceDialog, setDeletePriceDialog] = useState<{ supplier: ProductSupplier; price: ProductPrice } | null>(null);
+  const [lifecycleDialog, setLifecycleDialog] = useState<'archive' | 'restore' | 'delete' | null>(null);
+  const [lifecycleBusy, setLifecycleBusy] = useState(false);
   const [actionError, setActionError] = useState('');
   const [duplicating, setDuplicating] = useState(false);
   const [showAllDeliveries, setShowAllDeliveries] = useState(false);
@@ -67,14 +69,11 @@ const ProductDetail: React.FC = () => {
   const otherActive = isSupplierRole ? [] : activeSuppliers(product).filter(s => s.id !== main?.id);
   const today = localToday();
 
-  // Saves the changed product, then records what happened in the product's activity log
-  const saveChange = async (updated: Product, type: ProductActivityType, details: string) => {
-    setActionError('');
-    const { error } = await db.saveProductWithSuppliers(updated);
-    if (error) {
-      setActionError(`The change was not saved: ${error.message}`);
-      return false;
-    }
+  // A product that appears on any order (or delivery) can never be deleted, only archived
+  const everOrdered = orders.some(o => o.items.some(i => i.productId === product.id)) || productDeliveries.length > 0;
+
+  // Records what happened in the product's activity log and updates the screen
+  const logActivity = async (updated: Product, type: ProductActivityType, details: string) => {
     const entry: ProductActivity = {
       id: generateId(),
       productId: updated.id,
@@ -88,6 +87,65 @@ const ProductDetail: React.FC = () => {
     const withLog = logError ? updated : { ...updated, activity: [entry, ...updated.activity] };
     setProducts(prev => prev.map(p => p.id === updated.id ? withLog : p));
     if (logError) setActionError(`The change was saved, but the activity log was not: ${logError.message}`);
+  };
+
+  const setArchived = async (archived: boolean) => {
+    setActionError('');
+    setLifecycleBusy(true);
+    const { error } = await db.setProductArchived(product.id, archived, currentUser?.name);
+    setLifecycleBusy(false);
+    if (error) {
+      setActionError(`The product was not ${archived ? 'archived' : 'brought back'}: ${error.message}`);
+      return;
+    }
+    const updated: Product = archived
+      ? { ...product, isArchived: true, archivedBy: currentUser?.name, archivedAt: new Date().toISOString() }
+      : { ...product, isArchived: false, archivedBy: undefined, archivedAt: undefined };
+    await logActivity(updated, archived ? 'ARCHIVED' : 'RESTORED',
+      archived ? 'Product archived. It can no longer be added to orders' : 'Product brought back from the archive. It can be ordered again');
+    setLifecycleDialog(null);
+  };
+
+  const deleteProduct = async () => {
+    // Checked again at the moment of deleting, in case an order was placed meanwhile
+    if (everOrdered) { setLifecycleDialog(null); return; }
+    setActionError('');
+    setLifecycleBusy(true);
+    const { activity, ...rest } = product;
+    const record = await db.recordDeletedProduct({ id: generateId(), productId: product.id, title: product.title, snapshot: rest, deletedBy: currentUser?.name });
+    if (record.error) {
+      setLifecycleBusy(false);
+      setActionError(`The product was not deleted: ${record.error.message}`);
+      return;
+    }
+    const linkedFrom = products.filter(p => p.id !== product.id && (p.relatedProductIds || []).includes(product.id));
+    const unlink = await db.unlinkRelatedProduct(product.id, linkedFrom);
+    if (unlink.error) {
+      setLifecycleBusy(false);
+      setActionError(`The product was not deleted: ${unlink.error.message}`);
+      return;
+    }
+    const { error } = await db.deleteProduct(product.id);
+    setLifecycleBusy(false);
+    if (error) {
+      setActionError(`The product was not deleted: ${error.message}`);
+      return;
+    }
+    setProducts(prev => prev
+      .filter(p => p.id !== product.id)
+      .map(p => linkedFrom.some(l => l.id === p.id) ? { ...p, relatedProductIds: (p.relatedProductIds || []).filter(r => r !== product.id) } : p));
+    navigate('/products');
+  };
+
+  // Saves the changed product, then records what happened in the product's activity log
+  const saveChange = async (updated: Product, type: ProductActivityType, details: string) => {
+    setActionError('');
+    const { error } = await db.saveProductWithSuppliers(updated);
+    if (error) {
+      setActionError(`The change was not saved: ${error.message}`);
+      return false;
+    }
+    await logActivity(updated, type, details);
     return true;
   };
 
@@ -135,6 +193,9 @@ const ProductDetail: React.FC = () => {
       description: product.description ? `${product.description} [COPY]` : '[COPY]',
       dateAdded: today,
       activity: [],
+      isArchived: false,
+      archivedBy: undefined,
+      archivedAt: undefined,
       suppliers: product.suppliers.map(s => {
         const current = priceRecordOn(s, today) || sortPrices(s.prices).slice(-1)[0];
         return {
@@ -178,7 +239,16 @@ const ProductDetail: React.FC = () => {
             <p className="text-slate-500 text-xs md:text-sm font-medium mt-1">Added: {product.dateAdded}</p>
           </div>
         </div>
-        {(can.createProducts || can.editProductInfo || can.addPrices) && <div className="flex gap-2 md:gap-3 flex-wrap">
+        {(can.createProducts || can.editProductInfo || can.addPrices || can.archiveProducts || can.deleteProducts) && <div className="flex gap-2 md:gap-3 flex-wrap">
+          {can.archiveProducts && !product.isArchived && (
+            <button onClick={() => setLifecycleDialog('archive')} className={`${btn} hover:bg-slate-100`}>Archive</button>
+          )}
+          {can.archiveProducts && product.isArchived && (
+            <button onClick={() => setLifecycleDialog('restore')} className={`${btn} hover:bg-emerald-50 hover:border-emerald-300 hover:text-emerald-700`}>Bring Back</button>
+          )}
+          {can.deleteProducts && !everOrdered && (
+            <button onClick={() => setLifecycleDialog('delete')} className={`${btn} hover:bg-red-50 hover:border-red-300 hover:text-red-600`}>Delete</button>
+          )}
           {can.createProducts && (
             <button onClick={handleDuplicate} disabled={duplicating} className={`${btn} hover:bg-amber-50 hover:border-amber-300 hover:text-amber-600 disabled:opacity-50`}>
               {duplicating ? 'Duplicating...' : 'Duplicate'}
@@ -192,6 +262,12 @@ const ProductDetail: React.FC = () => {
           )}
         </div>}
       </div>
+
+      {product.isArchived && (
+        <div className="p-3 md:p-4 rounded-xl bg-slate-100 border border-slate-200 text-slate-700 text-sm font-bold">
+          Archived{product.archivedAt ? ` on ${product.archivedAt.slice(0, 10)}` : ''}{product.archivedBy ? ` by ${product.archivedBy}` : ''}. This product can't be added to orders. Its orders, deliveries, prices and history are kept.
+        </div>
+      )}
 
       {actionError && <div className="p-3 rounded-xl bg-red-50 text-red-700 text-sm font-bold">{actionError}</div>}
 
@@ -528,6 +604,37 @@ const ProductDetail: React.FC = () => {
         />
       )}
 
+      {/* Archive, bring back or delete the product (Super Admin) */}
+      {lifecycleDialog === 'archive' && (
+        <ConfirmModal
+          title="Archive this product?"
+          message="It stays in the product list, greyed out, and its orders, deliveries, prices and history are kept. It can't be added to new orders. Orders already open finish normally. You can bring it back at any time."
+          confirmLabel={lifecycleBusy ? 'Archiving...' : 'Archive'}
+          onClose={() => setLifecycleDialog(null)}
+          onConfirm={() => { if (!lifecycleBusy) setArchived(true); }}
+        />
+      )}
+      {lifecycleDialog === 'restore' && (
+        <ConfirmModal
+          title="Bring this product back?"
+          message="It will be available for orders again."
+          confirmLabel={lifecycleBusy ? 'Saving...' : 'Bring back'}
+          onClose={() => setLifecycleDialog(null)}
+          onConfirm={() => { if (!lifecycleBusy) setArchived(false); }}
+        />
+      )}
+      {lifecycleDialog === 'delete' && (
+        <ConfirmModal
+          title="Delete this product?"
+          message={everOrdered
+            ? 'This product has been ordered, so it cannot be deleted. Archive it instead.'
+            : `"${product.title}" has never been ordered. It will be removed completely, with its suppliers, prices and activity. This cannot be undone.`}
+          confirmLabel={everOrdered ? undefined : (lifecycleBusy ? 'Deleting...' : 'Delete product')}
+          onClose={() => setLifecycleDialog(null)}
+          onConfirm={() => { if (!lifecycleBusy) deleteProduct(); }}
+        />
+      )}
+
       {/* Delete a wrong price entry (Super Admin) */}
       {deletePriceDialog && (
         <ConfirmModal
@@ -685,7 +792,7 @@ const MetadataModal: React.FC<{
               )}
               <select onChange={e => { if (e.target.value) toggleRelated(e.target.value); e.target.value = ''; }} className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm" defaultValue="">
                 <option value="">+ Add linked product</option>
-                {products.filter(p => p.id !== product.id && !relatedIds.includes(p.id)).map(prod => (
+                {products.filter(p => p.id !== product.id && !p.isArchived && !relatedIds.includes(p.id)).map(prod => (
                   <option key={prod.id} value={prod.id}>{prod.title}</option>
                 ))}
               </select>

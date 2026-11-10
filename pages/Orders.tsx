@@ -30,8 +30,9 @@ const Orders: React.FC = () => {
   // Hooks stay above the early return so hook order never changes between renders
   const filteredVendorProducts = useMemo(() => {
     if (!selectedVendorId || !ctx) return [];
-    // Ordering stays supplier-first: only products this supplier is active for are listed
-    return ctx.products.filter(p => hasActiveSupplier(p, selectedVendorId));
+    // Ordering stays supplier-first: only products this supplier is active for are listed.
+    // Archived products can't be ordered.
+    return ctx.products.filter(p => !p.isArchived && hasActiveSupplier(p, selectedVendorId));
   }, [selectedVendorId, ctx?.products]);
 
   const totalOrderValue = useMemo(() => {
@@ -102,6 +103,7 @@ const Orders: React.FC = () => {
 
     // The supplier's price that applies today is locked into the order
     const product = products.find(p => p.id === tempProduct);
+    if (!product || product.isArchived) return;
     const unitPrice = priceFor(product, selectedVendorId, localToday());
 
     setCart(prev => [...prev, { productId: tempProduct, quantity: tempQuantity, unitPrice }]);

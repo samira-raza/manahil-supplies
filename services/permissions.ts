@@ -12,4 +12,7 @@ export const productPermissions = (u?: User | null) => ({
   correctPrices: isSuperAdmin(u),
   addSuppliers: isSuperAdmin(u) || (isAdmin(u) && !!u?.canAddProductSuppliers),
   manageSuppliers: isSuperAdmin(u),
+  // Agreed 4 Nov 2026: only the Super Admin archives, restores and deletes products
+  archiveProducts: isSuperAdmin(u),
+  deleteProducts: isSuperAdmin(u),
 });

@@ -21,6 +21,35 @@ export const db = {
   async deleteProduct(id: string) {
     return supabase.from('products').delete().eq('id', id);
   },
+  // Archive state is saved on its own, so ordinary product saves never change it
+  async setProductArchived(id: string, archived: boolean, by?: string) {
+    return supabase.from('products').update({
+      is_archived: archived,
+      archived_by: archived ? by || null : null,
+      archived_at: archived ? new Date().toISOString() : null,
+    }).eq('id', id);
+  },
+  // Keeps a record of a deleted product (its own activity log is deleted with it)
+  async recordDeletedProduct(entry: { id: string; productId: string; title: string; snapshot: any; deletedBy?: string }) {
+    return supabase.from('deleted_products').insert({
+      id: entry.id,
+      product_id: entry.productId,
+      title: entry.title,
+      snapshot: entry.snapshot,
+      deleted_by: entry.deletedBy || null,
+    });
+  },
+  // Removes this product from other products' "linked product" lists
+  async unlinkRelatedProduct(id: string, others: Product[]) {
+    for (const p of others) {
+      const ids = (p.relatedProductIds || []).filter(r => r !== id);
+      const r = await supabase.from('products')
+        .update({ related_product_id: ids.length > 0 ? JSON.stringify(ids) : null })
+        .eq('id', p.id);
+      if (r.error) return r;
+    }
+    return { error: null };
+  },
   // Saves the product with all its suppliers and prices.
   // The main supplier is saved last so there is never more than one main at a time.
   async saveProductWithSuppliers(p: Product) {

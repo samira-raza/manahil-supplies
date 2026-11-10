@@ -98,7 +98,8 @@ export interface ProductSupplier {
 export type ProductActivityType =
   | 'SUPPLIER_ADDED' | 'MAIN_SWITCHED' | 'SUPPLIER_REPLACED'
   | 'SUPPLIER_DISABLED' | 'SUPPLIER_ENABLED'
-  | 'PRICE_ADDED' | 'PRICE_EDITED' | 'PRICE_DELETED';
+  | 'PRICE_ADDED' | 'PRICE_EDITED' | 'PRICE_DELETED'
+  | 'ARCHIVED' | 'RESTORED';
 
 export interface ProductActivity {
   id: string;
@@ -125,6 +126,10 @@ export interface Product {
   measuringUnit?: string;
   dateAdded: string;
   relatedProductIds?: string[];
+  // Archived products stay visible but cannot be ordered
+  isArchived?: boolean;
+  archivedBy?: string;
+  archivedAt?: string;
 }
 
 export interface OrderItem {
