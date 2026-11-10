@@ -62,6 +62,7 @@ const useCRMStore = () => {
         { data: productSuppliersData },
         { data: productPricesData },
         { data: productActivityData },
+        { data: productLinksData, error: productLinksError },
       ] = await Promise.all([
         supabase.from('users').select('*'),
         supabase.from('vendors').select('*'),
@@ -75,11 +76,13 @@ const useCRMStore = () => {
         supabase.from('product_suppliers').select('*'),
         supabase.from('product_prices').select('*'),
         supabase.from('product_activity').select('*'),
+        supabase.from('product_links').select('*'),
       ]);
 
       setUsers((usersData || []).map(userFromDb));
       setVendors((vendorsData || []).map(vendorFromDb));
-      setProducts((productsData || []).map(row => productFromDb(row, productSuppliersData || [], productPricesData || [], productActivityData || [])));
+      const linkRows = productLinksError ? null : (productLinksData || []);
+      setProducts((productsData || []).map(row => productFromDb(row, productSuppliersData || [], productPricesData || [], productActivityData || [], linkRows)));
       setCategories((categoriesData || []).map(categoryFromDb));
       setMeasuringUnits((measuringUnitsData || []).map(measuringUnitFromDb));
       const parsedOrders = (ordersData || []).map(orderFromDb);

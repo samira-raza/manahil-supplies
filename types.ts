@@ -100,7 +100,8 @@ export type ProductActivityType =
   | 'SUPPLIER_DISABLED' | 'SUPPLIER_ENABLED'
   | 'PRICE_ADDED' | 'PRICE_EDITED' | 'PRICE_DELETED'
   | 'ARCHIVED' | 'RESTORED'
-  | 'COPIED_FROM';
+  | 'COPIED_FROM'
+  | 'LINK_ADDED' | 'LINK_REMOVED';
 
 export interface ProductActivity {
   id: string;
@@ -127,6 +128,8 @@ export interface Product {
   measuringUnit?: string;
   dateAdded: string;
   relatedProductIds?: string[];
+  // 'PER_ORDER' = no fixed price (e.g. custom stickers): the price is typed on each order line
+  priceMode?: 'LIST' | 'PER_ORDER';
   // Archived products stay visible but cannot be ordered
   isArchived?: boolean;
   archivedBy?: string;

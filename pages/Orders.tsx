@@ -20,6 +20,8 @@ const Orders: React.FC = () => {
   const [cart, setCart] = useState<{ productId: string, quantity: number, unitPrice: number }[]>([]);
   const [tempProduct, setTempProduct] = useState('');
   const [tempQuantity, setTempQuantity] = useState<number>(0);
+  // Typed price for a "price set on each order" product (e.g. custom stickers)
+  const [tempPrice, setTempPrice] = useState('');
   const [selectedBuyerId, setSelectedBuyerId] = useState('');
   const [selectedVendorId, setSelectedVendorId] = useState('');
   const [poNumber, setPoNumber] = useState('');
@@ -89,7 +91,10 @@ const Orders: React.FC = () => {
   });
 
   // Validation Logic
-  const isAddDisabled = !tempProduct || tempQuantity <= 0 || !selectedVendorId;
+  const tempIsPerOrder = products.find(p => p.id === tempProduct)?.priceMode === 'PER_ORDER';
+  const tempPriceValue = parseFloat(tempPrice);
+  const isAddDisabled = !tempProduct || tempQuantity <= 0 || !selectedVendorId ||
+    (tempIsPerOrder && (isNaN(tempPriceValue) || tempPriceValue <= 0));
   const isSubmitDisabled = !selectedBuyerId || !selectedVendorId || cart.length === 0;
 
   const addToCart = () => {
@@ -104,11 +109,16 @@ const Orders: React.FC = () => {
     // The supplier's price that applies today is locked into the order
     const product = products.find(p => p.id === tempProduct);
     if (!product || product.isArchived) return;
-    const unitPrice = priceFor(product, selectedVendorId, localToday());
+    // "Price set on each order" products use the price typed for this line (only Super Admin
+    // and Admin can create orders, so only they can type it)
+    const unitPrice = product.priceMode === 'PER_ORDER'
+      ? Math.round(tempPriceValue * 1000) / 1000
+      : priceFor(product, selectedVendorId, localToday());
 
     setCart(prev => [...prev, { productId: tempProduct, quantity: tempQuantity, unitPrice }]);
     setTempProduct('');
     setTempQuantity(0);
+    setTempPrice('');
   };
 
   const removeFromCart = (index: number) => {
@@ -543,7 +553,7 @@ const Orders: React.FC = () => {
                       <select 
                         disabled={!selectedVendorId}
                         value={tempProduct} 
-                        onChange={(e) => setTempProduct(e.target.value)} 
+                        onChange={(e) => { setTempProduct(e.target.value); setTempPrice(''); }}
                         className="w-full px-4 py-3 rounded-xl border-none bg-white/10 text-white outline-none text-sm font-bold backdrop-blur-md disabled:cursor-not-allowed"
                       >
                          <option value="" className="text-slate-900">-- Choose Item --</option>
@@ -559,12 +569,27 @@ const Orders: React.FC = () => {
                         value={tempQuantity || ''} 
                         onChange={(e) => setTempQuantity(Math.max(0, parseInt(e.target.value, 10)) || 0)} 
                         className="w-full px-4 py-3 rounded-xl border-none bg-white/10 text-white outline-none text-sm font-bold backdrop-blur-md placeholder-indigo-300" 
-                        placeholder="0" 
+                        placeholder="0"
                       />
                    </div>
-                   <button 
-                     type="button" 
-                     onClick={addToCart} 
+                   {tempIsPerOrder && (
+                     <div className="md:col-span-3">
+                        <label className="block text-[10px] font-black text-indigo-200 uppercase mb-2 tracking-widest">Price per piece for this order (PKR)*</label>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.001"
+                          value={tempPrice}
+                          onChange={(e) => setTempPrice(e.target.value)}
+                          className="w-full px-4 py-3 rounded-xl border-none bg-white/10 text-white outline-none text-sm font-bold backdrop-blur-md placeholder-indigo-300"
+                          placeholder="Price given by the supplier, e.g. 2.50"
+                        />
+                        <p className="text-[10px] text-indigo-200 font-bold mt-1">This product has no fixed price. The order keeps the price typed here.</p>
+                     </div>
+                   )}
+                   <button
+                     type="button"
+                     onClick={addToCart}
                      disabled={isAddDisabled}
                      className={`md:col-span-3 py-4 rounded-2xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 transition-all active:scale-95 shadow-xl ${isAddDisabled ? 'bg-white/20 text-white/40 cursor-not-allowed' : 'bg-white text-indigo-600 hover:bg-indigo-50'}`}
                    >
