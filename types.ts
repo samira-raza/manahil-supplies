@@ -99,7 +99,8 @@ export type ProductActivityType =
   | 'SUPPLIER_ADDED' | 'MAIN_SWITCHED' | 'SUPPLIER_REPLACED'
   | 'SUPPLIER_DISABLED' | 'SUPPLIER_ENABLED'
   | 'PRICE_ADDED' | 'PRICE_EDITED' | 'PRICE_DELETED'
-  | 'ARCHIVED' | 'RESTORED';
+  | 'ARCHIVED' | 'RESTORED'
+  | 'COPIED_FROM';
 
 export interface ProductActivity {
   id: string;

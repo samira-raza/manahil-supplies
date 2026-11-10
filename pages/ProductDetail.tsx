@@ -1,6 +1,6 @@
 
-import React, { useContext, useEffect, useMemo, useState } from 'react';
-import { useParams, Link, useNavigate, useLocation } from 'react-router-dom';
+import React, { useContext, useMemo, useState } from 'react';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { CRMContext, generateId } from '../App';
 import { Icons } from '../constants';
 import { Product, ProductActivity, ProductActivityType, ProductPrice, ProductSupplier, UserRole } from '../types';
@@ -12,10 +12,8 @@ const ProductDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const ctx = useContext(CRMContext);
   const navigate = useNavigate();
-  const location = useLocation();
 
   const [showMetadataModal, setShowMetadataModal] = useState(false);
-  const [metadataRequireChange, setMetadataRequireChange] = useState(false);
   const [priceDialog, setPriceDialog] = useState<{ vendorId?: string; edit?: ProductPrice } | null>(null);
   const [supplierDialog, setSupplierDialog] = useState<{ replace?: ProductSupplier } | null>(null);
   const [stopMainDialog, setStopMainDialog] = useState<ProductSupplier | null>(null);
@@ -23,17 +21,8 @@ const ProductDetail: React.FC = () => {
   const [lifecycleDialog, setLifecycleDialog] = useState<'archive' | 'restore' | 'delete' | null>(null);
   const [lifecycleBusy, setLifecycleBusy] = useState(false);
   const [actionError, setActionError] = useState('');
-  const [duplicating, setDuplicating] = useState(false);
   const [showAllDeliveries, setShowAllDeliveries] = useState(false);
   const [showAllActivity, setShowAllActivity] = useState(false);
-
-  useEffect(() => {
-    const params = new URLSearchParams(location.search);
-    if (params.get('edit') === '1') {
-      setMetadataRequireChange(true);
-      setShowMetadataModal(true);
-    }
-  }, [id, location.search]);
 
   // All deliveries of this product, newest first (kept above the early returns so hook order never changes)
   const productDeliveries = useMemo(() => {
@@ -183,39 +172,8 @@ const ProductDetail: React.FC = () => {
     await saveChange(withSupplier(sup.id, s => ({ ...s, isActive: true })), 'SUPPLIER_ENABLED', `${vendorName(sup.vendorId)} switched back on for this product`);
   };
 
-  const handleDuplicate = async () => {
-    setDuplicating(true);
-    const now = new Date().toISOString();
-    // The copy gets the same suppliers with their current prices only (no price history)
-    const copy: Product = {
-      ...product,
-      id: generateId(),
-      description: product.description ? `${product.description} [COPY]` : '[COPY]',
-      dateAdded: today,
-      activity: [],
-      isArchived: false,
-      archivedBy: undefined,
-      archivedAt: undefined,
-      suppliers: product.suppliers.map(s => {
-        const current = priceRecordOn(s, today) || sortPrices(s.prices).slice(-1)[0];
-        return {
-          ...s,
-          id: generateId(),
-          addedBy: currentUser?.name,
-          addedAt: now,
-          prices: current ? [{ id: generateId(), price: current.price, effectiveDate: today, note: `Copied from ${product.title}`, createdBy: currentUser?.name, createdAt: now }] : [],
-        };
-      }),
-    };
-    const { error } = await db.saveProductWithSuppliers(copy);
-    setDuplicating(false);
-    if (error) {
-      setActionError(`The copy was not saved: ${error.message}`);
-      return;
-    }
-    setProducts(prev => [copy, ...prev]);
-    navigate(`/products/${copy.id}?edit=1`);
-  };
+  // Duplicate opens the Create Product form filled in from this product. Nothing is saved until the copy is saved.
+  const handleDuplicate = () => navigate('/products', { state: { duplicateFrom: product.id } });
 
   const relatedProducts = (product.relatedProductIds || []).map((rid: string) => products.find(p => p.id === rid)).filter(Boolean);
 
@@ -250,12 +208,12 @@ const ProductDetail: React.FC = () => {
             <button onClick={() => setLifecycleDialog('delete')} className={`${btn} hover:bg-red-50 hover:border-red-300 hover:text-red-600`}>Delete</button>
           )}
           {can.createProducts && (
-            <button onClick={handleDuplicate} disabled={duplicating} className={`${btn} hover:bg-amber-50 hover:border-amber-300 hover:text-amber-600 disabled:opacity-50`}>
-              {duplicating ? 'Duplicating...' : 'Duplicate'}
+            <button onClick={handleDuplicate} className={`${btn} hover:bg-amber-50 hover:border-amber-300 hover:text-amber-600`}>
+              Duplicate
             </button>
           )}
           {can.editProductInfo && (
-            <button onClick={() => { setMetadataRequireChange(false); setShowMetadataModal(true); }} className={btn}>Edit Info</button>
+            <button onClick={() => setShowMetadataModal(true)} className={btn}>Edit Info</button>
           )}
           {can.addPrices && activeSuppliers(product).length > 0 && (
             <button onClick={() => setPriceDialog({})} className="flex-1 md:flex-none px-4 md:px-5 py-2.5 md:py-3 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 text-sm">Add Price</button>
@@ -515,8 +473,7 @@ const ProductDetail: React.FC = () => {
           categories={ctx.categories}
           measuringUnits={measuringUnits}
           products={products}
-          requireChange={metadataRequireChange}
-          onClose={() => { setShowMetadataModal(false); setMetadataRequireChange(false); }}
+          onClose={() => setShowMetadataModal(false)}
           onSave={async (updates) => {
             const updated = { ...product, ...updates };
             const { error } = await db.upsertProduct(updated);
@@ -526,7 +483,6 @@ const ProductDetail: React.FC = () => {
             }
             setProducts(prev => prev.map(p => p.id === id ? updated : p));
             setShowMetadataModal(false);
-            setMetadataRequireChange(false);
           }}
         />
       )}
