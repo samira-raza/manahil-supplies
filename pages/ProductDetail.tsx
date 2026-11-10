@@ -78,6 +78,28 @@ const ProductDetail: React.FC = () => {
     if (logError) setActionError(`The change was saved, but the activity log was not: ${logError.message}`);
   };
 
+  // Two-way links: added or removed on both products, and recorded in both products' history
+  const changeLink = async (otherId: string, add: boolean) => {
+    const other = products.find(p => p.id === otherId);
+    if (!other) return;
+    setActionError('');
+    const res = add
+      ? await db.addProductLinks(product.id, [otherId], currentUser?.name)
+      : await db.removeProductLink(product.id, otherId);
+    if (res.error) {
+      setActionError(`The link was not ${add ? 'added' : 'removed'}: ${res.error.message}`);
+      return;
+    }
+    const mine = add ? [...(product.relatedProductIds || []).filter(x => x !== otherId), otherId] : (product.relatedProductIds || []).filter(x => x !== otherId);
+    const theirs = add ? [...(other.relatedProductIds || []).filter(x => x !== product.id), product.id] : (other.relatedProductIds || []).filter(x => x !== product.id);
+    await db.setRelatedMirror(product.id, mine);
+    await db.setRelatedMirror(otherId, theirs);
+    await logActivity({ ...product, relatedProductIds: mine }, add ? 'LINK_ADDED' : 'LINK_REMOVED',
+      add ? `Linked to "${other.title}"` : `Link to "${other.title}" removed`);
+    await logActivity({ ...other, relatedProductIds: theirs }, add ? 'LINK_ADDED' : 'LINK_REMOVED',
+      add ? `Linked to "${product.title}"` : `Link to "${product.title}" removed`);
+  };
+
   const setArchived = async (archived: boolean) => {
     setActionError('');
     setLifecycleBusy(true);
@@ -123,6 +145,11 @@ const ProductDetail: React.FC = () => {
     setProducts(prev => prev
       .filter(p => p.id !== product.id)
       .map(p => linkedFrom.some(l => l.id === p.id) ? { ...p, relatedProductIds: (p.relatedProductIds || []).filter(r => r !== product.id) } : p));
+    // Linked products record that the link went with the deleted product
+    for (const l of linkedFrom) {
+      await logActivity({ ...l, relatedProductIds: (l.relatedProductIds || []).filter(r => r !== product.id) }, 'LINK_REMOVED',
+        `Link to "${product.title}" removed (that product was deleted)`);
+    }
     navigate('/products');
   };
 
@@ -175,7 +202,12 @@ const ProductDetail: React.FC = () => {
   // Duplicate opens the Create Product form filled in from this product. Nothing is saved until the copy is saved.
   const handleDuplicate = () => navigate('/products', { state: { duplicateFrom: product.id } });
 
-  const relatedProducts = (product.relatedProductIds || []).map((rid: string) => products.find(p => p.id === rid)).filter(Boolean);
+  // Suppliers only see linked products they supply themselves
+  const relatedProducts = (product.relatedProductIds || [])
+    .map((rid: string) => products.find(p => p.id === rid))
+    .filter((p): p is Product => !!p && (!isSupplierRole || hasSupplier(p, mySupplierId)));
+  const linkCandidates = products.filter(p => p.id !== product.id && !p.isArchived && !(product.relatedProductIds || []).includes(p.id));
+  const perOrder = product.priceMode === 'PER_ORDER';
 
   // Last 10 deliveries, or all of them when extended history is shown
   const lastDeliveries = showAllDeliveries ? productDeliveries : productDeliveries.slice(0, 10);
@@ -215,7 +247,7 @@ const ProductDetail: React.FC = () => {
           {can.editProductInfo && (
             <button onClick={() => setShowMetadataModal(true)} className={btn}>Edit Info</button>
           )}
-          {can.addPrices && activeSuppliers(product).length > 0 && (
+          {can.addPrices && !perOrder && activeSuppliers(product).length > 0 && (
             <button onClick={() => setPriceDialog({})} className="flex-1 md:flex-none px-4 md:px-5 py-2.5 md:py-3 bg-indigo-600 text-white rounded-xl font-semibold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100 text-sm">Add Price</button>
           )}
         </div>}
@@ -238,10 +270,15 @@ const ProductDetail: React.FC = () => {
             <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 md:mb-6">Linked Product Family</h3>
             {relatedProducts.length > 0 ? (
               <div className="space-y-3">
-                {relatedProducts.map((rp: any) => (
-                  <div key={rp.id} className="group relative bg-slate-50 p-4 md:p-5 rounded-2xl border border-slate-100 hover:border-indigo-300 transition-all">
-                    <div className="text-sm font-black text-slate-900 mb-1 break-words">{rp.title}</div>
-                    <div className="text-[10px] text-indigo-600 font-bold uppercase mb-2">{rp.category}</div>
+                {relatedProducts.map(rp => (
+                  <div key={rp.id} className={`group relative bg-slate-50 p-4 md:p-5 rounded-2xl border border-slate-100 hover:border-indigo-300 transition-all ${rp.isArchived ? 'opacity-60' : ''}`}>
+                    <div className="flex justify-between items-start gap-2">
+                      <div className="text-sm font-black text-slate-900 mb-1 break-words">{rp.title}</div>
+                      {can.manageLinks && (
+                        <button onClick={() => changeLink(rp.id, false)} title="Remove this link from both products" className="text-[10px] font-black text-slate-400 hover:text-red-600 uppercase tracking-widest shrink-0">Remove</button>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-indigo-600 font-bold uppercase mb-2">{rp.category}{rp.isArchived ? ' · Archived' : ''}</div>
                     <Link to={`/products/${rp.id}`} className="inline-flex items-center gap-2 text-xs font-black text-indigo-600 hover:underline">
                       View Profile <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M9 5l7 7-7 7" strokeWidth={2}/></svg>
                     </Link>
@@ -253,6 +290,12 @@ const ProductDetail: React.FC = () => {
                 No related products linked (e.g. Inner Carton)
               </div>
             )}
+            {can.manageLinks && linkCandidates.length > 0 && (
+              <select value="" onChange={e => { if (e.target.value) changeLink(e.target.value, true); }} className="mt-3 w-full px-4 py-3 rounded-xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-xs">
+                <option value="">+ Link a product</option>
+                {linkCandidates.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
+              </select>
+            )}
           </div>
 
           {/* Current Pricing Card */}
@@ -261,10 +304,14 @@ const ProductDetail: React.FC = () => {
                 <h3 className="text-[10px] font-black text-indigo-200 uppercase tracking-widest mb-4 md:mb-8">{isSupplierRole ? 'Your Price Today' : 'Main Supplier Price Today'}</h3>
                 {headline ? (
                   <>
+                    {perOrder ? (
+                      <div className="text-xl md:text-3xl font-black mb-1">Price set on each order</div>
+                    ) : (
                     <div className="flex items-end gap-2 mb-1">
                       <span className="text-3xl md:text-5xl font-black">PKR {priceOn(headline, today).toFixed(2)}</span>
                       <span className="text-xs md:text-sm font-bold text-indigo-200 mb-0.5 md:mb-1">/ piece</span>
                     </div>
+                    )}
                     <div className="text-[10px] md:text-xs font-bold text-indigo-100 uppercase tracking-widest truncate">{isSupplierRole ? vendorName(headline.vendorId) : `Main supplier: ${vendorName(headline.vendorId)}`}</div>
                   </>
                 ) : (
@@ -277,7 +324,7 @@ const ProductDetail: React.FC = () => {
                     {otherActive.map(s => (
                       <div key={s.id} className="flex justify-between gap-4">
                         <span className="text-xs font-bold truncate">{vendorName(s.vendorId)}</span>
-                        <span className="text-sm font-black shrink-0">PKR {priceOn(s, today).toFixed(2)}</span>
+                        <span className="text-sm font-black shrink-0">{perOrder ? 'On each order' : `PKR ${priceOn(s, today).toFixed(2)}`}</span>
                       </div>
                     ))}
                   </div>
@@ -297,7 +344,9 @@ const ProductDetail: React.FC = () => {
                  <h3 className="text-base md:text-lg font-black text-slate-900 flex items-center gap-2">
                    <Icons.Category /> {isSupplierRole ? 'Your Prices' : 'Suppliers and Prices'}
                  </h3>
-                 <p className="text-[10px] md:text-xs text-slate-500 font-medium mt-1">Each price is per piece and applies from its start date. Orders keep the price of the day they were placed.</p>
+                 <p className="text-[10px] md:text-xs text-slate-500 font-medium mt-1">{perOrder
+                   ? 'This product has no fixed price. The supplier\'s price is typed on each order line, and the order keeps it.'
+                   : 'Each price is per piece and applies from its start date. Orders keep the price of the day they were placed.'}</p>
                </div>
                {can.addSuppliers && (
                  <button onClick={() => setSupplierDialog({})} className="text-[10px] font-black text-indigo-600 hover:underline uppercase tracking-widest self-start sm:self-auto shrink-0">+ Add Supplier</button>
@@ -321,7 +370,7 @@ const ProductDetail: React.FC = () => {
                           </div>
                           <div className="text-right shrink-0">
                             <div className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Today</div>
-                            <div className="text-sm font-black text-indigo-600">{current ? `PKR ${current.price.toFixed(2)}` : '--'}</div>
+                            <div className="text-sm font-black text-indigo-600">{perOrder ? 'Set on each order' : (current ? `PKR ${current.price.toFixed(2)}` : '--')}</div>
                           </div>
                        </div>
                        {can.manageSuppliers && (
@@ -333,7 +382,7 @@ const ProductDetail: React.FC = () => {
                            {sup.isActive && <button className={smallBtn} onClick={() => setSupplierDialog({ replace: sup })}>Replace</button>}
                          </div>
                        )}
-                       <div className="bg-slate-50 rounded-2xl md:rounded-3xl p-3 md:p-4 space-y-2 md:space-y-3">
+                       <div className={`bg-slate-50 rounded-2xl md:rounded-3xl p-3 md:p-4 space-y-2 md:space-y-3 ${perOrder ? 'hidden' : ''}`}>
                           {history.map(h => (
                             <div key={h.id}>
                               <div className="flex justify-between items-center gap-2">
@@ -522,6 +571,7 @@ const ProductDetail: React.FC = () => {
           vendors={vendors.filter(v => !hasSupplier(product, v.id))}
           replacing={supplierDialog.replace ? vendorName(supplierDialog.replace.vendorId) : undefined}
           canSetMain={can.manageSuppliers && !supplierDialog.replace}
+          noPrice={perOrder}
           onClose={() => setSupplierDialog(null)}
           onSave={async (vendorId, values, makeMain) => {
             const now = new Date().toISOString();
@@ -533,7 +583,7 @@ const ProductDetail: React.FC = () => {
               isActive: true,
               addedBy: currentUser?.name,
               addedAt: now,
-              prices: [{ id: generateId(), ...values, createdBy: currentUser?.name, createdAt: now }],
+              prices: values ? [{ id: generateId(), ...values, createdBy: currentUser?.name, createdAt: now }] : [],
             };
             const suppliers = product.suppliers.map(s => {
               if (old && s.id === old.id) return { ...s, isActive: false, isMain: false };
@@ -541,7 +591,7 @@ const ProductDetail: React.FC = () => {
               return s;
             });
             const updated: Product = { ...product, suppliers: [...suppliers, newSup] };
-            const priceText = `PKR ${values.price.toFixed(2)} from ${values.effectiveDate}`;
+            const priceText = values ? `PKR ${values.price.toFixed(2)} from ${values.effectiveDate}` : 'price set on each order';
             const ok = old
               ? await saveChange(updated, 'SUPPLIER_REPLACED', `${vendorName(old.vendorId)} replaced by ${vendorName(vendorId)} (${priceText})${newSup.isMain ? '. It is now the main supplier' : ''}`)
               : await saveChange(updated, 'SUPPLIER_ADDED', `${vendorName(vendorId)} added as a supplier (${priceText})${newSup.isMain ? ' and set as main supplier' : ''}`);
@@ -627,7 +677,6 @@ const MetadataModal: React.FC<{
   onSave: (updates: any) => void;
   requireChange?: boolean;
 }> = ({ product, categories, measuringUnits, products, onClose, onSave, requireChange = false }) => {
-  const initialRelatedIds: string[] = product.relatedProductIds || [];
   const [formData, setFormData] = useState({
     brand: product.brand,
     category: product.category,
@@ -637,8 +686,6 @@ const MetadataModal: React.FC<{
     measuringUnit: product.measuringUnit || '',
     packing: product.packing,
   });
-  const [relatedIds, setRelatedIds] = useState<string[]>(initialRelatedIds);
-
   const generatedTitle = useMemo(() => {
     return [formData.category, formData.brand, formData.itemName, formData.packing].filter(Boolean).join(' ');
   }, [formData]);
@@ -654,23 +701,19 @@ const MetadataModal: React.FC<{
       formData.measuringUnit !== (product.measuringUnit || '') ||
       formData.packing !== product.packing
     );
-    const relatedChanged = JSON.stringify([...relatedIds].sort()) !== JSON.stringify([...initialRelatedIds].sort());
-    return fieldChanged || relatedChanged;
-  }, [formData, relatedIds]);
+    return fieldChanged;
+  }, [formData]);
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  const toggleRelated = (id: string) => {
-    setRelatedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
-  };
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!isDirty) return;
-    onSave({ ...formData, title: generatedTitle, relatedProductIds: relatedIds });
+    // Linked products are managed on the product page, not here
+    onSave({ ...formData, title: generatedTitle });
   };
 
   return (
@@ -728,30 +771,6 @@ const MetadataModal: React.FC<{
             <div>
               <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Packing</label>
               <input name="packing" value={formData.packing} onChange={handleChange} type="text" className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm" placeholder="Optional, e.g. Bundle of 20" />
-            </div>
-            <div className="md:col-span-2">
-              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Linked Products</label>
-              {relatedIds.length > 0 && (
-                <div className="flex flex-wrap gap-2 mb-3">
-                  {relatedIds.map(rid => {
-                    const prod = products.find(p => p.id === rid);
-                    return prod ? (
-                      <span key={rid} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold">
-                        {prod.title}
-                        <button type="button" onClick={() => toggleRelated(rid)} className="hover:text-red-500 transition-colors">
-                          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                        </button>
-                      </span>
-                    ) : null;
-                  })}
-                </div>
-              )}
-              <select onChange={e => { if (e.target.value) toggleRelated(e.target.value); e.target.value = ''; }} className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm" defaultValue="">
-                <option value="">+ Add linked product</option>
-                {products.filter(p => p.id !== product.id && !p.isArchived && !relatedIds.includes(p.id)).map(prod => (
-                  <option key={prod.id} value={prod.id}>{prod.title}</option>
-                ))}
-              </select>
             </div>
           </div>
 
@@ -901,9 +920,10 @@ const SupplierModal: React.FC<{
   vendors: { id: string; name: string }[];
   replacing?: string;
   canSetMain: boolean;
+  noPrice?: boolean; // "price set on each order" products: no price is asked
   onClose: () => void;
-  onSave: (vendorId: string, values: PriceValues, makeMain: boolean) => Promise<void>;
-}> = ({ vendors, replacing, canSetMain, onClose, onSave }) => {
+  onSave: (vendorId: string, values: PriceValues | null, makeMain: boolean) => Promise<void>;
+}> = ({ vendors, replacing, canSetMain, noPrice = false, onClose, onSave }) => {
   const [vendorId, setVendorId] = useState('');
   const [price, setPrice] = useState('');
   const [date, setDate] = useState(localToday());
@@ -915,7 +935,7 @@ const SupplierModal: React.FC<{
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!vendorId) { setError('Please choose a supplier.'); return; }
-    const values = readPrice(price, date, note);
+    const values = noPrice ? null : readPrice(price, date, note);
     if (typeof values === 'string') { setError(values); return; }
     setSaving(true);
     await onSave(vendorId, values, makeMain);
@@ -923,7 +943,7 @@ const SupplierModal: React.FC<{
   };
 
   return (
-    <ModalShell title={replacing ? 'Replace Supplier' : 'Add Supplier'} subtitle={replacing ? `${replacing} will be stopped for this product` : 'With its first price'} onClose={onClose}>
+    <ModalShell title={replacing ? 'Replace Supplier' : 'Add Supplier'} subtitle={replacing ? `${replacing} will be stopped for this product` : (noPrice ? 'Price is set on each order' : 'With its first price')} onClose={onClose}>
       {vendors.length === 0 ? (
         <p className="text-sm text-slate-500">Every supplier is already linked to this product.</p>
       ) : (
@@ -935,7 +955,7 @@ const SupplierModal: React.FC<{
               {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
             </select>
           </div>
-          <PriceFields price={price} date={date} note={note} setPrice={setPrice} setDate={setDate} setNote={setNote} />
+          {!noPrice && <PriceFields price={price} date={date} note={note} setPrice={setPrice} setDate={setDate} setNote={setNote} />}
           {canSetMain && (
             <label className="flex items-center gap-2 text-sm font-bold text-slate-600">
               <input type="checkbox" checked={makeMain} onChange={e => setMakeMain(e.target.checked)} /> Make this the main supplier

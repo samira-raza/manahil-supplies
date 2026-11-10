@@ -51,6 +51,9 @@ const Products: React.FC = () => {
   const [copyLinks, setCopyLinks] = useState<string[]>([]);
   const [whatsDifferent, setWhatsDifferent] = useState('');
   const [priceWarning, setPriceWarning] = useState('');
+  // "Price set on each order": no price is asked when the product is created
+  const [perOrderMode, setPerOrderMode] = useState(false);
+  const [pageNotice, setPageNotice] = useState('');
 
   // Auto-generate display name
   const generatedTitle = useMemo(() => {
@@ -89,10 +92,13 @@ const Products: React.FC = () => {
       packing: original.packing || '',
       relatedProductId: '',
     });
-    // Same suppliers (stopped ones are left out) with today's price filled in, no price history
+    // Same suppliers (stopped ones are left out) with today's price filled in, no price history.
+    // "Price set on each order" products have no prices to fill in.
+    const isPerOrder = original.priceMode === 'PER_ORDER';
+    setPerOrderMode(isPerOrder);
     const active = activeSuppliers(original);
     setSupplierDrafts(active.length > 0
-      ? active.map(s => ({ vendorId: s.vendorId, prices: [{ price: String(priceOn(s, today)), effectiveDate: today, note: '' }] }))
+      ? active.map(s => ({ vendorId: s.vendorId, prices: isPerOrder ? [emptyPriceRow()] : [{ price: String(priceOn(s, today)), effectiveDate: today, note: '' }] }))
       : [emptySupplierDraft()]);
     setMainVendorId(mainSupplier(original)?.isActive ? mainSupplier(original)!.vendorId : '');
     // Linked to the original and to everything the original is linked to
@@ -157,6 +163,7 @@ const Products: React.FC = () => {
     setCopyLinks([]);
     setWhatsDifferent('');
     setPriceWarning('');
+    setPerOrderMode(false);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -168,10 +175,11 @@ const Products: React.FC = () => {
     }
     const drafts = supplierDrafts.filter(d => d.vendorId);
     if (drafts.length === 0) {
-      setFormError('Add at least one supplier with a price.');
+      setFormError(perOrderMode ? 'Add at least one supplier.' : 'Add at least one supplier with a price.');
       return;
     }
-    for (const d of drafts) {
+    // "Price set on each order" products have no prices to check
+    for (const d of perOrderMode ? [] : drafts) {
       const vendorName = vendors.find(v => v.id === d.vendorId)?.name || 'supplier';
       const rows = d.prices.filter(r => r.price !== '');
       if (rows.length === 0) {
@@ -208,16 +216,17 @@ const Products: React.FC = () => {
       const originalVendors = activeSuppliers(duplicateOf).map(s => s.vendorId).sort().join(',');
       const suppliersChanged = drafts.map(d => d.vendorId).sort().join(',') !== originalVendors ||
         mainVendorId !== (mainSupplier(duplicateOf)?.isActive ? mainSupplier(duplicateOf)!.vendorId : '');
-      const pricesChanged = drafts.some(d => {
+      const modeChanged = perOrderMode !== (duplicateOf.priceMode === 'PER_ORDER');
+      const pricesChanged = !perOrderMode && drafts.some(d => {
         const rows = d.prices.filter(r => r.price !== '');
         return rows.length !== 1 || parseFloat(rows[0].price) !== originalPrice(d.vendorId);
       });
-      if (!infoChanged && !suppliersChanged && !pricesChanged) {
+      if (!infoChanged && !suppliersChanged && !pricesChanged && !modeChanged) {
         setFormError('Nothing is different from the original yet. Change at least one detail or price before saving.');
         return;
       }
       // Warn once if a price is the same as the original's; saving again continues
-      const samePrice = drafts.filter(d => d.prices.some(r => r.price !== '' && parseFloat(r.price) === originalPrice(d.vendorId)));
+      const samePrice = perOrderMode ? [] : drafts.filter(d => d.prices.some(r => r.price !== '' && parseFloat(r.price) === originalPrice(d.vendorId)));
       if (samePrice.length > 0 && !priceWarning) {
         setPriceWarning(`These prices are the same as the original: ${samePrice.map(d => `${nameOf(d.vendorId)} PKR ${originalPrice(d.vendorId)!.toFixed(2)}`).join(', ')}. Check them, or press Save Copy again to keep them.`);
         return;
@@ -233,7 +242,7 @@ const Products: React.FC = () => {
       isActive: true,
       addedBy: currentUser?.name,
       addedAt: now,
-      prices: d.prices.filter(r => r.price !== '').map(r => ({
+      prices: perOrderMode ? [] : d.prices.filter(r => r.price !== '').map(r => ({
         id: generateId(),
         price: parseFloat(r.price),
         effectiveDate: r.effectiveDate,
@@ -256,7 +265,8 @@ const Products: React.FC = () => {
       suppliers,
       activity: [],
       dateAdded: today,
-      relatedProductIds: duplicateOf ? copyLinks : (formData.relatedProductId ? [formData.relatedProductId] : []),
+      relatedProductIds: copyLinks,
+      priceMode: perOrderMode ? 'PER_ORDER' : 'LIST',
     };
 
     setSaving(true);
@@ -267,9 +277,43 @@ const Products: React.FC = () => {
       return;
     }
 
+    // Two-way links: each linked product also lists the new product, and records it in its history
+    const titleOf = (pid: string) => products.find(p => p.id === pid)?.title || 'a deleted product';
+    const otherUpdates: Record<string, Product> = {};
+    let linkProblem = '';
+    if (copyLinks.length > 0) {
+      const linkRes = await db.addProductLinks(productId, copyLinks, currentUser?.name);
+      if (linkRes.error) {
+        linkProblem = `The product was saved, but its links were not: ${linkRes.error.message}`;
+        newProduct.relatedProductIds = [];
+      } else {
+        for (const oid of copyLinks) {
+          const other = products.find(p => p.id === oid);
+          if (!other) continue;
+          const theirs = [...(other.relatedProductIds || []).filter(x => x !== productId), productId];
+          await db.setRelatedMirror(oid, theirs);
+          const otherEntry: ProductActivity = {
+            id: generateId(), productId: oid, type: 'LINK_ADDED',
+            details: `Linked to "${generatedTitle}" (new product${duplicateOf ? `, copied from "${duplicateOf.title}"` : ''})`,
+            userId: currentUser?.id, userName: currentUser?.name, at: new Date().toISOString(),
+          };
+          const { error: otherLogError } = await db.insertProductActivity(otherEntry);
+          otherUpdates[oid] = { ...other, relatedProductIds: theirs, activity: otherLogError ? other.activity : [otherEntry, ...other.activity] };
+        }
+        if (!duplicateOf) {
+          const ownEntry: ProductActivity = {
+            id: generateId(), productId, type: 'LINK_ADDED',
+            details: `Linked to ${copyLinks.map(l => `"${titleOf(l)}"`).join(', ')}`,
+            userId: currentUser?.id, userName: currentUser?.name, at: new Date().toISOString(),
+          };
+          const { error: ownLogError } = await db.insertProductActivity(ownEntry);
+          if (!ownLogError) newProduct.activity = [ownEntry];
+        }
+      }
+    }
+
     // A copy records where it came from, what was copied over and what's different
     if (duplicateOf) {
-      const titleOf = (pid: string) => products.find(p => p.id === pid)?.title || 'a deleted product';
       const main = suppliers.find(s => s.isMain);
       const entry: ProductActivity = {
         id: generateId(),
@@ -277,8 +321,9 @@ const Products: React.FC = () => {
         type: 'COPIED_FROM',
         details: `Copied from "${duplicateOf.title}". Copied over: brand, category, item name, description, size, unit, packing, ` +
           `suppliers (${suppliers.map(s => nameOf(s.vendorId)).join(', ')}${main ? `; main: ${nameOf(main.vendorId)}` : ''}), ` +
-          `linked products (${copyLinks.length > 0 ? copyLinks.map(titleOf).join(', ') : 'none'}). ` +
-          `Price history was not copied; prices were entered for the copy. What's different: ${whatsDifferent.trim()}`,
+          `linked products (${copyLinks.length > 0 ? copyLinks.map(titleOf).join(', ') : 'none'})` +
+          `${perOrderMode ? ', "price set on each order" setting. No prices (price is typed on each order).' : '. Price history was not copied; prices were entered for the copy.'}` +
+          ` What's different: ${whatsDifferent.trim()}`,
         userId: currentUser?.id,
         userName: currentUser?.name,
         at: new Date().toISOString(),
@@ -287,7 +332,14 @@ const Products: React.FC = () => {
       if (!logError) newProduct.activity = [entry];
     }
     setSaving(false);
-    setProducts(prev => [newProduct, ...prev]);
+    setProducts(prev => [newProduct, ...prev.map(p => otherUpdates[p.id] || p)]);
+    if (linkProblem) {
+      // Saved, but the links need adding again from the product page
+      setShowAddModal(false);
+      resetForm();
+      setPageNotice(linkProblem);
+      return;
+    }
     setShowAddModal(false);
     const wasCopy = !!duplicateOf;
     resetForm();
@@ -327,6 +379,13 @@ const Products: React.FC = () => {
           </button>
         )}
       </div>
+
+      {pageNotice && (
+        <div className="p-3 rounded-xl bg-red-50 text-red-700 text-sm font-bold flex justify-between gap-3">
+          <span>{pageNotice}</span>
+          <button onClick={() => setPageNotice('')} className="text-red-400 hover:text-red-700 shrink-0">✕</button>
+        </div>
+      )}
 
       <div className="bg-white rounded-2xl md:rounded-[32px] border border-slate-200 shadow-sm overflow-hidden">
         <div className="p-3 md:p-6 border-b border-slate-100 bg-slate-50/50">
@@ -423,7 +482,7 @@ const Products: React.FC = () => {
                       <td className="px-4 md:px-8 py-4 md:py-6">
                         {first ? (
                           <>
-                            <div className="text-sm md:text-lg font-black text-indigo-600">PKR {priceOn(first).toFixed(2)}</div>
+                            <div className="text-sm md:text-lg font-black text-indigo-600">{p.priceMode === 'PER_ORDER' ? 'On each order' : `PKR ${priceOn(first).toFixed(2)}`}</div>
                             <div className="text-[9px] md:text-[10px] font-bold text-slate-400 truncate max-w-[80px] md:max-w-[120px]" title={vendorName(first.vendorId)}>
                               {vendorName(first.vendorId)}{!first.isActive ? ' (stopped)' : ''}
                             </div>
@@ -435,7 +494,7 @@ const Products: React.FC = () => {
                       <td className="px-4 md:px-8 py-4 md:py-6">
                         {others.length > 0 ? others.map(o => (
                           <div key={o.id} className="text-[10px] md:text-xs font-bold text-slate-500 truncate max-w-[120px] md:max-w-[180px]" title={vendorName(o.vendorId)}>
-                            {vendorName(o.vendorId)}: <span className="font-black text-slate-700">PKR {priceOn(o).toFixed(2)}</span>
+                            {vendorName(o.vendorId)}: <span className="font-black text-slate-700">{p.priceMode === 'PER_ORDER' ? 'on each order' : `PKR ${priceOn(o).toFixed(2)}`}</span>
                           </div>
                         )) : (
                           <span className="text-sm text-slate-300">--</span>
@@ -605,45 +664,43 @@ const Products: React.FC = () => {
                     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Packing</label>
                     <input name="packing" value={formData.packing} onChange={handleInputChange} type="text" className="w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm" placeholder="Optional, e.g. Bundle of 50" />
                   </div>
-                  {duplicateOf ? (
-                    <div className="md:col-span-2">
-                      <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Linked Products</label>
-                      <p className="text-xs text-slate-500 mb-2">The copy is linked to the original and to the original's linked products. Remove any you don't need.</p>
-                      <div className="flex flex-wrap gap-2 mb-2">
-                        {copyLinks.length === 0 && <span className="text-xs text-slate-400 italic">No linked products</span>}
-                        {copyLinks.map(lid => (
-                          <span key={lid} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-indigo-50 text-indigo-700 text-xs font-bold">
-                            {products.find(p => p.id === lid)?.title || 'Unknown product'}{lid === duplicateOf.id ? ' (original)' : ''}
-                            <button type="button" onClick={() => setCopyLinks(prev => prev.filter(x => x !== lid))} className="text-indigo-400 hover:text-red-600" aria-label="Remove link">✕</button>
-                          </span>
-                        ))}
-                      </div>
-                      <select value="" onChange={e => { const v = e.target.value; if (v) setCopyLinks(prev => [...prev, v]); }} className="w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm">
-                        <option value="">+ Add linked product</option>
-                        {products.filter(prod => !prod.isArchived && !copyLinks.includes(prod.id)).map(prod => (
-                          <option key={prod.id} value={prod.id}>{prod.title}</option>
-                        ))}
-                      </select>
-                    </div>
-                  ) : (
+                  {/* Linked products (two-way): several can be added. A copy starts with the original and its links. */}
                   <div className="md:col-span-2">
-                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Link Related Product (e.g. Inner for this Master)</label>
-                    <select name="relatedProductId" value={formData.relatedProductId} onChange={handleInputChange} className="w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm">
-                       <option value="">No link</option>
-                       {products.filter(prod => !prod.isArchived).map(prod => (
-                         <option key={prod.id} value={prod.id}>{prod.title}</option>
-                       ))}
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Linked Products (e.g. Inner for this Master)</label>
+                    <p className="text-xs text-slate-500 mb-2">{duplicateOf
+                      ? "The copy is linked to the original and to the original's linked products. Remove any you don't need."
+                      : 'Linked products show on each other\'s page.'}</p>
+                    <div className="flex flex-wrap gap-2 mb-2">
+                      {copyLinks.length === 0 && <span className="text-xs text-slate-400 italic">No linked products</span>}
+                      {copyLinks.map(lid => (
+                        <span key={lid} className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-indigo-50 text-indigo-700 text-xs font-bold">
+                          {products.find(p => p.id === lid)?.title || 'Unknown product'}{lid === duplicateOf?.id ? ' (original)' : ''}
+                          <button type="button" onClick={() => setCopyLinks(prev => prev.filter(x => x !== lid))} className="text-indigo-400 hover:text-red-600" aria-label="Remove link">✕</button>
+                        </span>
+                      ))}
+                    </div>
+                    <select value="" onChange={e => { const v = e.target.value; if (v) setCopyLinks(prev => [...prev, v]); }} className="w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm">
+                      <option value="">+ Add linked product</option>
+                      {products.filter(prod => !prod.isArchived && !copyLinks.includes(prod.id)).map(prod => (
+                        <option key={prod.id} value={prod.id}>{prod.title}</option>
+                      ))}
                     </select>
                   </div>
-                  )}
                 </div>
               </div>
 
               <div className="space-y-4 md:space-y-6 pt-4 md:pt-6 border-t border-slate-100">
                 <div>
                   <h3 className="text-[9px] md:text-[10px] font-black text-indigo-400 uppercase tracking-widest">Suppliers and Prices*</h3>
-                  <p className="text-xs text-slate-500 mt-1">Add at least one supplier. Each price is per piece and applies from its start date. Add older prices too if you have them.</p>
+                  <p className="text-xs text-slate-500 mt-1">{perOrderMode
+                    ? 'Add at least one supplier. No price is asked: the supplier\'s price is typed on each order line.'
+                    : 'Add at least one supplier. Each price is per piece and applies from its start date. Add older prices too if you have them.'}</p>
                 </div>
+
+                <label className="flex items-start gap-3 p-3 md:p-4 rounded-xl bg-white border border-slate-200 text-sm font-bold text-slate-700 cursor-pointer">
+                  <input type="checkbox" className="mt-0.5" checked={perOrderMode} onChange={e => { setPerOrderMode(e.target.checked); setPriceWarning(''); }} />
+                  <span>Price set on each order<span className="block text-xs font-medium text-slate-500 mt-0.5">For products with no fixed price, e.g. custom stickers. The price is typed on the order line each time.</span></span>
+                </label>
 
                 {supplierDrafts.map((d, idx) => (
                   <div key={idx} className="p-4 md:p-6 bg-slate-50 rounded-2xl md:rounded-[32px] space-y-3 border-2 border-transparent focus-within:border-indigo-200 transition-all">
@@ -666,6 +723,7 @@ const Products: React.FC = () => {
                       <input type="radio" name="mainSupplier" disabled={!d.vendorId} checked={!!d.vendorId && mainVendorId === d.vendorId} onChange={() => setMainVendorId(d.vendorId)} />
                       Main supplier
                     </label>
+                    {!perOrderMode && <>
                     <div className="space-y-2">
                       {d.prices.map((r, pIdx) => (
                         <div key={pIdx} className="grid grid-cols-2 md:grid-cols-[1fr_1fr_2fr_auto] gap-2 items-end">
@@ -691,6 +749,7 @@ const Products: React.FC = () => {
                       ))}
                     </div>
                     <button type="button" onClick={() => updateSupplierDraft(idx, x => ({ ...x, prices: [...x.prices, emptyPriceRow()] }))} className="text-xs font-black text-indigo-600 hover:underline">+ Add price</button>
+                    </>}
                   </div>
                 ))}
 

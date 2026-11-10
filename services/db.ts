@@ -39,6 +39,27 @@ export const db = {
       deleted_by: entry.deletedBy || null,
     });
   },
+  // Two-way links: one row per pair, smaller id first
+  async addProductLinks(productId: string, otherIds: string[], by?: string) {
+    if (otherIds.length === 0) return { error: null };
+    const rows = otherIds.filter(o => o !== productId).map(o => ({
+      product_a: productId < o ? productId : o,
+      product_b: productId < o ? o : productId,
+      created_by: by || null,
+    }));
+    return supabase.from('product_links').upsert(rows, { onConflict: 'product_a,product_b', ignoreDuplicates: true });
+  },
+  async removeProductLink(a: string, b: string) {
+    return supabase.from('product_links').delete()
+      .eq('product_a', a < b ? a : b)
+      .eq('product_b', a < b ? b : a);
+  },
+  // Keeps the old one-way list column in step with the two-way links (for rollback)
+  async setRelatedMirror(productId: string, ids: string[]) {
+    return supabase.from('products')
+      .update({ related_product_id: ids.length > 0 ? JSON.stringify(ids) : null })
+      .eq('id', productId);
+  },
   // Removes this product from other products' "linked product" lists
   async unlinkRelatedProduct(id: string, others: Product[]) {
     for (const p of others) {

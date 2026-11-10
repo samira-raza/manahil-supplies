@@ -12,6 +12,10 @@ export const productPermissions = (u?: User | null) => ({
   correctPrices: isSuperAdmin(u),
   addSuppliers: isSuperAdmin(u) || (isAdmin(u) && !!u?.canAddProductSuppliers),
   manageSuppliers: isSuperAdmin(u),
+  // Agreed 1 Nov 2026: Super Admin and Admin (and later the admin-like user) add and remove links
+  manageLinks: isSuperAdmin(u) || isAdmin(u),
+  // Agreed 1 Nov 2026: Super Admin and Admin (and later the admin-like user) type the price
+  // of a "price set on each order" product on the order line (only they can create orders)
   // Agreed 4 Nov 2026: only the Super Admin archives, restores and deletes products
   archiveProducts: isSuperAdmin(u),
   deleteProducts: isSuperAdmin(u),

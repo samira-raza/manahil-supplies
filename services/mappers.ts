@@ -77,8 +77,13 @@ export const productActivityFromDb = (row: any): ProductActivity => ({
   at: row.at,
 });
 
-export const productFromDb = (row: any, supplierRows: any[] = [], priceRows: any[] = [], activityRows: any[] = []): Product => {
+// linkRows: rows of product_links (two-way links). null when that table is not there yet,
+// in which case the old one-way related_product_id list is used.
+export const productFromDb = (row: any, supplierRows: any[] = [], priceRows: any[] = [], activityRows: any[] = [], linkRows: any[] | null = null): Product => {
   const own = supplierRows.filter(s => s.product_id === row.id);
+  const linkedIds = linkRows
+    ? linkRows.filter(l => l.product_a === row.id || l.product_b === row.id).map(l => l.product_a === row.id ? l.product_b : l.product_a)
+    : null;
   return {
     id: row.id,
     title: row.title,
@@ -95,7 +100,8 @@ export const productFromDb = (row: any, supplierRows: any[] = [], priceRows: any
       .sort((a, b) => b.at.localeCompare(a.at)),
     measuringUnit: row.measuring_unit || '',
     dateAdded: row.date_added,
-    relatedProductIds: (() => {
+    priceMode: row.price_mode === 'PER_ORDER' ? 'PER_ORDER' : 'LIST',
+    relatedProductIds: linkedIds ?? (() => {
       const v = row.related_product_id;
       if (!v) return [];
       if (Array.isArray(v)) return v;
@@ -132,7 +138,9 @@ export const productToDb = (p: Product) => {
     price_history: priceHistory,
     measuring_unit: p.measuringUnit || null,
     date_added: p.dateAdded,
+    // Kept up to date (both directions) so the previous app version still works after a rollback
     related_product_id: p.relatedProductIds && p.relatedProductIds.length > 0 ? JSON.stringify(p.relatedProductIds) : null,
+    price_mode: p.priceMode === 'PER_ORDER' ? 'PER_ORDER' : 'LIST',
   };
 };
 
