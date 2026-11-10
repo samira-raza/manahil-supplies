@@ -431,7 +431,11 @@ const UserManagement: React.FC = () => {
           formatRoleName={formatRoleName}
           onClose={() => setViewingUser(null)}
           onToggleActive={async (updatedUser) => {
-            await db.upsertUser(updatedUser);
+            const { error } = await db.upsertUser(updatedUser);
+            if (error) {
+              alert(`The change was not saved: ${error.message}`);
+              return;
+            }
             setUsers(prev => prev.map(u => u.id === updatedUser.id ? updatedUser : u));
             setViewingUser(updatedUser);
           }}
@@ -455,6 +459,7 @@ const UserDetailsModal: React.FC<{
   const isActive = user.isActive !== false;
   const isSelf = currentUser?.id === user.id;
   const canToggle = !isSelf && currentUser?.role === UserRole.SUPER_ADMIN;
+  const canSetPermissions = currentUser?.role === UserRole.SUPER_ADMIN;
 
   return (
     <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-2 md:p-4">
@@ -519,6 +524,31 @@ const UserDetailsModal: React.FC<{
             <div className="bg-slate-50 rounded-2xl p-5 border border-slate-100">
               <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Assigned Vendor</div>
               <div className="font-bold text-slate-900">{userVendor.name}</div>
+            </div>
+          )}
+
+          {user.role === UserRole.ADMIN && (
+            <div className="bg-slate-50 rounded-2xl p-5 border border-slate-100 space-y-3">
+              <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Product Permissions</div>
+              {([
+                ['canCreateProducts', 'Can create products', 'Create and duplicate products'],
+                ['canAddProductSuppliers', 'Can add suppliers to products', 'Add a new supplier to an existing product'],
+              ] as const).map(([key, label, hint]) => (
+                <label key={key} className={`flex items-start gap-3 ${canSetPermissions ? 'cursor-pointer' : ''}`}>
+                  <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={!!user[key]}
+                    disabled={!canSetPermissions}
+                    onChange={e => onToggleActive({ ...user, [key]: e.target.checked })}
+                  />
+                  <span>
+                    <span className="block text-sm font-bold text-slate-900">{label}</span>
+                    <span className="block text-xs text-slate-500">{hint}</span>
+                  </span>
+                </label>
+              ))}
+              {!canSetPermissions && <p className="text-[10px] text-slate-400 italic">Only the Super Admin can change these.</p>}
             </div>
           )}
 

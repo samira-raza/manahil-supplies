@@ -4,6 +4,7 @@ import { CRMContext, generateId } from '../App';
 import { DeliveryStatus, Order, UserRole } from '../types';
 import { Icons } from '../constants';
 import { db } from '../services/db';
+import { hasActiveSupplier, orderBelongsTo, priceFor, localToday } from '../services/pricing';
 
 const Orders: React.FC = () => {
   const ctx = useContext(CRMContext);
@@ -29,7 +30,8 @@ const Orders: React.FC = () => {
   // Hooks stay above the early return so hook order never changes between renders
   const filteredVendorProducts = useMemo(() => {
     if (!selectedVendorId || !ctx) return [];
-    return ctx.products.filter(p => p.primaryVendorId === selectedVendorId || p.secondaryVendorId === selectedVendorId);
+    // Ordering stays supplier-first: only products this supplier is active for are listed
+    return ctx.products.filter(p => hasActiveSupplier(p, selectedVendorId));
   }, [selectedVendorId, ctx?.products]);
 
   const totalOrderValue = useMemo(() => {
@@ -72,10 +74,7 @@ const Orders: React.FC = () => {
 
   // Base orders filtered by role
   const baseOrders = (isVendor || isVendorStaff)
-    ? orders.filter(o => o.items.some(i => {
-        const product = products.find(p => p.id === i.productId);
-        return product?.primaryVendorId === myVendorId || product?.secondaryVendorId === myVendorId;
-      }))
+    ? orders.filter(o => orderBelongsTo(o, myVendorId, products))
     : orders;
 
   // Filtered orders
@@ -101,11 +100,9 @@ const Orders: React.FC = () => {
       return;
     }
 
-    // Get the price at the time of adding (locked in)
+    // The supplier's price that applies today is locked into the order
     const product = products.find(p => p.id === tempProduct);
-    const unitPrice = product?.primaryVendorId === selectedVendorId
-      ? (product.primaryPrice || 0)
-      : (product?.secondaryPrice || 0);
+    const unitPrice = priceFor(product, selectedVendorId, localToday());
 
     setCart(prev => [...prev, { productId: tempProduct, quantity: tempQuantity, unitPrice }]);
     setTempProduct('');
@@ -127,7 +124,7 @@ const Orders: React.FC = () => {
       orderNumber: orderNum,
       poNumber: poNumber || '',
       vendorId: selectedVendorId,
-      date: new Date().toISOString().split('T')[0],
+      date: localToday(),
       buyerId: selectedBuyerId,
       placedBy: buyer?.name || 'System Auto',
       confirmedBy: 'Pending Vendor Receipt',

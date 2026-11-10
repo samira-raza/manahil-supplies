@@ -1,9 +1,9 @@
 import { supabase } from './supabase';
 import {
-  vendorToDb, productToDb, orderToDb, deliveryToDb,
+  vendorToDb, productToDb, productSupplierToDb, productPriceToDb, productActivityToDb, orderToDb, deliveryToDb,
   paymentToDb, userToDb, buyerToDb, categoryToDb, measuringUnitToDb
 } from './mappers';
-import { Vendor, Product, Order, Delivery, Payment, User, Buyer, Category, MeasuringUnit } from '../types';
+import { Vendor, Product, ProductActivity, Order, Delivery, Payment, User, Buyer, Category, MeasuringUnit } from '../types';
 
 export const db = {
   // VENDORS
@@ -20,6 +20,29 @@ export const db = {
   },
   async deleteProduct(id: string) {
     return supabase.from('products').delete().eq('id', id);
+  },
+  // Saves the product with all its suppliers and prices.
+  // The main supplier is saved last so there is never more than one main at a time.
+  async saveProductWithSuppliers(p: Product) {
+    const res = await supabase.from('products').upsert(productToDb(p));
+    if (res.error) return res;
+    const suppliers = [...p.suppliers].sort((a, b) => Number(a.isMain) - Number(b.isMain));
+    for (const s of suppliers) {
+      const r = await supabase.from('product_suppliers').upsert(productSupplierToDb(p.id, s));
+      if (r.error) return r;
+    }
+    const prices = p.suppliers.flatMap(s => s.prices.map(pr => productPriceToDb(p.id, s.vendorId, pr)));
+    if (prices.length > 0) {
+      const r = await supabase.from('product_prices').upsert(prices);
+      if (r.error) return r;
+    }
+    return res;
+  },
+  async deleteProductPrice(id: string) {
+    return supabase.from('product_prices').delete().eq('id', id);
+  },
+  async insertProductActivity(a: ProductActivity) {
+    return supabase.from('product_activity').insert(productActivityToDb(a));
   },
 
   // ORDERS

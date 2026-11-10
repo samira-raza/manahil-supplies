@@ -2,6 +2,7 @@
 import React, { useContext, useState } from 'react';
 import { CRMContext, generateId } from '../App';
 import { UserRole, Delivery, DeliveryStatus, ChallanStatus, Product } from '../types';
+import { deliveryLine, orderBelongsTo } from '../services/pricing';
 import { db } from '../services/db';
 import { Icons } from '../constants';
 
@@ -43,12 +44,7 @@ const Deliveries: React.FC = () => {
   // Everyone can create deliveries (vendors for their own orders)
 
   const baseFilteredDeliveries = isSupplierRole
-    ? deliveries.filter(d => {
-        return d.items.some(di => {
-           const p = products.find(prod => prod.id === di.productId);
-           return p?.primaryVendorId === mySupplierId || p?.secondaryVendorId === mySupplierId;
-        });
-      })
+    ? deliveries.filter(d => d.items.some(di => deliveryLine(di, orders, products).vendorId === mySupplierId))
     : deliveries;
 
   // Apply search, order, and vendor filters
@@ -57,10 +53,7 @@ const Deliveries: React.FC = () => {
       d.challanNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
       d.deliveryDate.includes(searchTerm);
     const matchesOrder = !filterOrder || d.items.some(i => i.orderNumber === filterOrder);
-    const matchesVendor = !filterVendor || d.items.some(i => {
-      const prod = products.find(p => p.id === i.productId);
-      return prod?.primaryVendorId === filterVendor;
-    });
+    const matchesVendor = !filterVendor || d.items.some(i => deliveryLine(i, orders, products).vendorId === filterVendor);
     return matchesSearch && matchesOrder && matchesVendor;
   });
 
@@ -68,11 +61,7 @@ const Deliveries: React.FC = () => {
   const activeOrders = (() => {
     return orders.filter(o => {
       if (isSupplierRole) {
-        const isPart = o.items.some(i => {
-          const p = products.find(prod => prod.id === i.productId);
-          return p?.primaryVendorId === mySupplierId || p?.secondaryVendorId === mySupplierId;
-        });
-        if (!isPart) return false;
+        if (!orderBelongsTo(o, mySupplierId, products)) return false;
       }
       return true;
     });
@@ -404,7 +393,7 @@ const Deliveries: React.FC = () => {
                       <tbody className="divide-y divide-slate-100">
                          {activeChallan.items.map((item, idx) => {
                             const p = products.find(prod => prod.id === item.productId);
-                            const unitPrice = p?.primaryPrice || 0;
+                            const unitPrice = deliveryLine(item, orders, products).unitPrice;
                             const itemSt = item.itemStatus || ChallanStatus.ACTIVE;
                             const isItemActive = itemSt === ChallanStatus.ACTIVE;
                             const lineTotal = isItemActive ? item.quantity * unitPrice : 0;
@@ -477,8 +466,7 @@ const Deliveries: React.FC = () => {
                               PKR {activeChallan.items.reduce((sum, item) => {
                                 const isActive = (item.itemStatus || ChallanStatus.ACTIVE) === ChallanStatus.ACTIVE;
                                 if (!isActive) return sum;
-                                const p = products.find(prod => prod.id === item.productId);
-                                return sum + item.quantity * (p?.primaryPrice || 0);
+                                return sum + deliveryLine(item, orders, products).value;
                               }, 0).toLocaleString()}
                             </td>
                             <td></td>

@@ -2,6 +2,7 @@
 import React, { useContext, useEffect, useState } from 'react';
 import { CRMContext } from '../App';
 import { DeliveryStatus, UserRole } from '../types';
+import { orderBelongsTo } from '../services/pricing';
 import { generateInsights } from '../services/gemini';
 import { Icons } from '../constants';
 import { useNavigate } from 'react-router-dom';
@@ -38,10 +39,7 @@ const Dashboard: React.FC = () => {
 
   // Metric Calculations
   const filteredOrders = isSupplierRole
-    ? orders.filter(o => o.items.some(i => {
-        const product = products.find(p => p.id === i.productId);
-        return product?.primaryVendorId === mySupplierId || product?.secondaryVendorId === mySupplierId;
-      }))
+    ? orders.filter(o => orderBelongsTo(o, mySupplierId, products))
     : orders;
 
   const pendingOrdersCount = filteredOrders.filter(o => 
@@ -50,28 +48,18 @@ const Dashboard: React.FC = () => {
 
   const totalSales = filteredOrders.reduce((sum, o) => sum + o.totalAmount, 0);
 
-  // Chart Data: Sales per Vendor
+  // Chart Data: Sales per Vendor (each order counts for its own supplier, at its locked prices)
   const salesByVendor = vendors.map(s => {
-    const vendorSales = orders.reduce((sum, o) => {
-      const orderAmountForVendor = o.items.reduce((itemSum, item) => {
-        const prod = products.find(p => p.id === item.productId);
-        if (prod?.primaryVendorId === s.id) {
-          return itemSum + (item.quantity * (prod.primaryPrice || 0));
-        }
-        return itemSum;
-      }, 0);
-      return sum + orderAmountForVendor;
-    }, 0);
+    const vendorSales = orders
+      .filter(o => orderBelongsTo(o, s.id, products))
+      .reduce((sum, o) => sum + o.items.reduce((itemSum, item) => itemSum + item.quantity * item.unitPrice, 0), 0);
     return { name: s.name, sales: vendorSales };
   }).filter(item => item.sales > 0);
 
   // Pending Orders per Vendor
   const pendingByVendor = vendors.map(s => {
-    const count = orders.filter(o => 
-      o.items.some(item => {
-        const prod = products.find(p => p.id === item.productId);
-        return prod?.primaryVendorId === s.id && item.status === DeliveryStatus.PENDING;
-      })
+    const count = orders.filter(o =>
+      orderBelongsTo(o, s.id, products) && o.items.some(item => item.status === DeliveryStatus.PENDING)
     ).length;
     return { name: s.name, count };
   }).filter(item => item.count > 0);
@@ -81,16 +69,10 @@ const Dashboard: React.FC = () => {
   // Vendor Wise Pending Orders (detailed)
   const vendorPendingOrders = vendors.map(v => {
     const pendingOrders = filteredOrders
-      .filter(o => o.items.some(item => {
-        const prod = products.find(p => p.id === item.productId);
-        return (prod?.primaryVendorId === v.id || o.vendorId === v.id) && item.status === DeliveryStatus.PENDING;
-      }))
+      .filter(o => orderBelongsTo(o, v.id, products) && o.items.some(item => item.status === DeliveryStatus.PENDING))
       .map(o => ({
         ...o,
-        pendingItems: o.items.filter(item => {
-          const prod = products.find(p => p.id === item.productId);
-          return (prod?.primaryVendorId === v.id || o.vendorId === v.id) && item.status === DeliveryStatus.PENDING;
-        })
+        pendingItems: o.items.filter(item => item.status === DeliveryStatus.PENDING)
       }));
     const totalPendingAmount = pendingOrders.reduce((sum, o) =>
       sum + o.pendingItems.reduce((s, item) => s + item.quantity * item.unitPrice, 0), 0

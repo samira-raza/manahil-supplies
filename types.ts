@@ -42,6 +42,8 @@ export interface User {
   allowedVendorIds?: string[];
   isActive?: boolean;
   mustResetPassword?: boolean;
+  canCreateProducts?: boolean;
+  canAddProductSuppliers?: boolean;
 }
 
 export interface Buyer {
@@ -72,9 +74,40 @@ export interface Vendor {
   };
 }
 
-export interface PriceRecord {
+// One price for one supplier of one product, valid from its effective date
+export interface ProductPrice {
+  id: string;
   price: number;
-  date: string;
+  effectiveDate: string; // YYYY-MM-DD
+  note?: string;
+  createdBy?: string;
+  createdAt: string;
+}
+
+// A supplier linked to a product. Never deleted, only disabled.
+export interface ProductSupplier {
+  id: string;
+  vendorId: string;
+  isMain: boolean;
+  isActive: boolean;
+  addedBy?: string;
+  addedAt: string;
+  prices: ProductPrice[];
+}
+
+export type ProductActivityType =
+  | 'SUPPLIER_ADDED' | 'MAIN_SWITCHED' | 'SUPPLIER_REPLACED'
+  | 'SUPPLIER_DISABLED' | 'SUPPLIER_ENABLED'
+  | 'PRICE_ADDED' | 'PRICE_EDITED' | 'PRICE_DELETED';
+
+export interface ProductActivity {
+  id: string;
+  productId: string;
+  type: ProductActivityType;
+  details: string;
+  userId?: string;
+  userName?: string;
+  at: string;
 }
 
 export interface Product {
@@ -86,13 +119,9 @@ export interface Product {
   description: string;
   unitSize: string;
   packing: string;
-  
-  primaryVendorId: string;
-  primaryPrice: number;
-  secondaryVendorId: string;
-  secondaryPrice: number;
-  
-  priceHistory: Record<string, PriceRecord[]>;
+
+  suppliers: ProductSupplier[];
+  activity: ProductActivity[];
   measuringUnit?: string;
   dateAdded: string;
   relatedProductIds?: string[];
