@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { HashRouter, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
-import { Category, ChallanStatus, DeliveryStatus, UserRole, Product, Vendor, Order, Delivery, User, Payment, Buyer, StagedDispatchItem, MeasuringUnit } from './types';
+import { Category, ChallanStatus, DeliveryStatus, UserRole, Product, Vendor, Order, Delivery, User, Payment, Buyer, StagedDispatchItem, MeasuringUnit, Brand, BrandSet, BrandActivity } from './types';
 import { Icons } from './constants';
 import Dashboard from './pages/Dashboard';
 import Products from './pages/Products';
@@ -12,13 +12,14 @@ import Orders from './pages/Orders';
 import Deliveries from './pages/Deliveries';
 import UserManagement from './pages/UserManagement';
 import Categories from './pages/Categories';
+import Brands from './pages/Brands';
 import MeasuringUnits from './pages/MeasuringUnits';
 import BuyerTeam from './pages/BuyerTeam';
 import { supabase } from './services/supabase';
 import {
   vendorFromDb, productFromDb, orderFromDb, deliveryFromDb,
   paymentFromDb, userFromDb, buyerFromDb, categoryFromDb, measuringUnitFromDb,
-  deliveryToDb, orderToDb, userToDb
+  deliveryToDb, orderToDb, userToDb, brandFromDb, brandSetFromDb, brandActivityFromDb
 } from './services/mappers';
 
 export const generateId = () => Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
@@ -36,6 +37,9 @@ const useCRMStore = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [brands, setBrands] = useState<Brand[]>([]);
+  const [brandSets, setBrandSets] = useState<BrandSet[]>([]);
+  const [brandActivity, setBrandActivity] = useState<BrandActivity[]>([]);
   const [measuringUnits, setMeasuringUnits] = useState<MeasuringUnit[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
@@ -63,6 +67,10 @@ const useCRMStore = () => {
         { data: productPricesData },
         { data: productActivityData },
         { data: productLinksData, error: productLinksError },
+        { data: brandsData },
+        { data: brandSetsData },
+        { data: brandSetMembersData },
+        { data: brandActivityData },
       ] = await Promise.all([
         supabase.from('users').select('*'),
         supabase.from('vendors').select('*'),
@@ -77,6 +85,10 @@ const useCRMStore = () => {
         supabase.from('product_prices').select('*'),
         supabase.from('product_activity').select('*'),
         supabase.from('product_links').select('*'),
+        supabase.from('brands').select('*'),
+        supabase.from('brand_sets').select('*'),
+        supabase.from('brand_set_members').select('*'),
+        supabase.from('brand_activity').select('*').order('at', { ascending: false }),
       ]);
 
       setUsers((usersData || []).map(userFromDb));
@@ -84,6 +96,9 @@ const useCRMStore = () => {
       const linkRows = productLinksError ? null : (productLinksData || []);
       setProducts((productsData || []).map(row => productFromDb(row, productSuppliersData || [], productPricesData || [], productActivityData || [], linkRows)));
       setCategories((categoriesData || []).map(categoryFromDb));
+      setBrands((brandsData || []).map(brandFromDb));
+      setBrandSets((brandSetsData || []).map(row => brandSetFromDb(row, brandSetMembersData || [])));
+      setBrandActivity((brandActivityData || []).map(brandActivityFromDb));
       setMeasuringUnits((measuringUnitsData || []).map(measuringUnitFromDb));
       const parsedOrders = (ordersData || []).map(orderFromDb);
       const parsedDeliveries = (deliveriesData || []).map(deliveryFromDb);
@@ -245,6 +260,7 @@ const useCRMStore = () => {
 
   return {
     currentUser, setCurrentUser, products, setProducts, vendors: visibleVendors, setVendors, categories, setCategories,
+    brands, setBrands, brandSets, setBrandSets, brandActivity, setBrandActivity,
     measuringUnits, setMeasuringUnits,
     orders, setOrders, deliveries, setDeliveries, users, setUsers, payments, setPayments, buyers, setBuyers,
     dispatchBucket, setDispatchBucket, finalizeChallan, recalculateOrderStatuses, loading
@@ -344,6 +360,7 @@ const Layout: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     { name: 'Dashboard', path: '/', icon: Icons.Dashboard, roles: ['all'] },
     { name: 'Products', path: '/products', icon: Icons.Products, roles: ['all'] },
     { name: 'Categories', path: '/categories', icon: Icons.Category, roles: [UserRole.SUPER_ADMIN, UserRole.ADMIN] },
+    { name: 'Brands', path: '/brands', icon: Icons.Category, roles: [UserRole.SUPER_ADMIN, UserRole.ADMIN] },
     { name: 'Units', path: '/measuring-units', icon: Icons.Ruler, roles: [UserRole.SUPER_ADMIN, UserRole.ADMIN] },
     { name: 'Vendors', path: '/suppliers', icon: Icons.Vendors, roles: ['all'] },
     { name: 'Buyer Team', path: '/buyers', icon: Icons.User, roles: [UserRole.SUPER_ADMIN, UserRole.ADMIN] },
@@ -592,6 +609,7 @@ const App: React.FC = () => {
           <Route path="/products" element={<Products />} />
           <Route path="/products/:id" element={<ProductDetail />} />
           <Route path="/categories" element={<Categories />} />
+          <Route path="/brands" element={<Brands />} />
           <Route path="/measuring-units" element={<MeasuringUnits />} />
           <Route path="/suppliers" element={<Vendors />} />
           <Route path="/suppliers/:id" element={<VendorDetail />} />

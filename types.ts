@@ -5,6 +5,39 @@ export interface Category {
   description?: string;
 }
 
+// Brands (agreed 12 Nov 2026, D37). A parent brand has no parentId and has initials.
+// A child brand has a parentId. A brand set is a parent plus chosen child brands, fixed once saved.
+export interface Brand {
+  id: string;
+  name: string;
+  parentId?: string;
+  initials?: string; // parent brands only, 2-3 capital letters, unique
+  label?: string;    // parent brands only, optional short label shown under product names
+  isActive: boolean;
+  createdBy?: string;
+  createdAt?: string;
+}
+
+export interface BrandSet {
+  id: string;
+  parentId: string;
+  childIds: string[];
+  isActive: boolean;
+  createdBy?: string;
+  createdAt?: string;
+}
+
+export interface BrandActivity {
+  id: string;
+  brandId?: string;
+  setId?: string;
+  type: 'CREATED' | 'RENAMED' | 'INITIALS_CHANGED' | 'LABEL_CHANGED' | 'DISABLED' | 'ENABLED' | 'MOVED' | 'DELETED';
+  details: string;
+  userId?: string;
+  userName?: string;
+  at: string;
+}
+
 export interface MeasuringUnit {
   id: string;
   name: string;
@@ -130,6 +163,9 @@ export interface Product {
   relatedProductIds?: string[];
   // 'PER_ORDER' = no fixed price (e.g. custom stickers): the price is typed on each order line
   priceMode?: 'LIST' | 'PER_ORDER';
+  // One brand entry per product: a parent brand alone, or a brand set (D37). `brand` keeps the parent's name.
+  brandParentId?: string;
+  brandSetId?: string;
   // Archived products stay visible but cannot be ordered
   isArchived?: boolean;
   archivedBy?: string;
@@ -141,6 +177,7 @@ export interface OrderItem {
   quantity: number;
   unitPrice: number; // Price at the time of order (locked in)
   status: DeliveryStatus; // Current line item status
+  includesDisabledBrand?: boolean; // ordered on purpose despite a disabled brand (D37)
 }
 
 export interface Order {

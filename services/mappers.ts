@@ -1,4 +1,4 @@
-import { Vendor, Product, ProductSupplier, ProductPrice, ProductActivity, Order, Delivery, Payment, User, Buyer, Category, MeasuringUnit, ChallanStatus } from '../types';
+import { Vendor, Product, ProductSupplier, ProductPrice, ProductActivity, Order, Delivery, Payment, User, Buyer, Category, MeasuringUnit, ChallanStatus, Brand, BrandSet, BrandActivity } from '../types';
 import { mainSupplier, activeSuppliers, priceOn, sortPrices } from './pricing';
 
 // ---- Vendor ----
@@ -101,6 +101,8 @@ export const productFromDb = (row: any, supplierRows: any[] = [], priceRows: any
     measuringUnit: row.measuring_unit || '',
     dateAdded: row.date_added,
     priceMode: row.price_mode === 'PER_ORDER' ? 'PER_ORDER' : 'LIST',
+    brandParentId: row.brand_parent_id || undefined,
+    brandSetId: row.brand_set_id || undefined,
     relatedProductIds: linkedIds ?? (() => {
       const v = row.related_product_id;
       if (!v) return [];
@@ -141,6 +143,8 @@ export const productToDb = (p: Product) => {
     // Kept up to date (both directions) so the previous app version still works after a rollback
     related_product_id: p.relatedProductIds && p.relatedProductIds.length > 0 ? JSON.stringify(p.relatedProductIds) : null,
     price_mode: p.priceMode === 'PER_ORDER' ? 'PER_ORDER' : 'LIST',
+    brand_parent_id: p.brandParentId || null,
+    brand_set_id: p.brandSetId || null,
   };
 };
 
@@ -304,6 +308,59 @@ export const categoryToDb = (c: Category) => ({
   id: c.id,
   name: c.name,
   description: c.description || null,
+});
+
+// ---- Brands ----
+export const brandFromDb = (row: any): Brand => ({
+  id: row.id,
+  name: row.name,
+  parentId: row.parent_id || undefined,
+  initials: row.initials || undefined,
+  label: row.label || undefined,
+  isActive: row.is_active !== false,
+  createdBy: row.created_by || undefined,
+  createdAt: row.created_at || undefined,
+});
+
+export const brandToDb = (b: Brand) => ({
+  id: b.id,
+  name: b.name.trim(),
+  parent_id: b.parentId || null,
+  initials: b.parentId ? null : (b.initials || '').toUpperCase(),
+  label: b.parentId ? null : (b.label?.trim() || null),
+  is_active: b.isActive,
+  created_by: b.createdBy || null,
+});
+
+export const brandSetFromDb = (row: any, memberRows: any[] = []): BrandSet => ({
+  id: row.id,
+  parentId: row.parent_id,
+  childIds: memberRows.filter(m => m.set_id === row.id).map(m => m.child_id),
+  isActive: row.is_active !== false,
+  createdBy: row.created_by || undefined,
+  createdAt: row.created_at || undefined,
+});
+
+export const brandActivityToDb = (a: BrandActivity) => ({
+  id: a.id,
+  brand_id: a.brandId || null,
+  set_id: a.setId || null,
+  type: a.type,
+  details: a.details,
+  user_id: a.userId || null,
+  user_name: a.userName || null,
+  at: a.at,
+});
+
+export const brandActivityFromDb = (row: any): BrandActivity => ({
+  id: row.id,
+  brandId: row.brand_id || undefined,
+  setId: row.set_id || undefined,
+  type: row.type,
+  details: row.details || '',
+  userId: row.user_id || undefined,
+  userName: row.user_name || undefined,
+  at: row.at,
 });
 
 // ---- MeasuringUnit ----
