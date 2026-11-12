@@ -4,12 +4,15 @@ import { CRMContext, generateId } from '../App';
 import { Buyer, UserRole } from '../types';
 import { Icons } from '../constants';
 import { db } from '../services/db';
+import { notSavedMessage, errorBoxCls } from '../services/errors';
 
 const BuyerTeam: React.FC = () => {
   const ctx = useContext(CRMContext);
   const [showAddModal, setShowAddModal] = useState(false);
   const [name, setName] = useState('');
   const [contact, setContact] = useState('');
+  const [formError, setFormError] = useState('');
+  const [pageError, setPageError] = useState('');
 
   if (!ctx) return null;
   const { buyers, setBuyers, currentUser } = ctx;
@@ -28,7 +31,9 @@ const BuyerTeam: React.FC = () => {
       contactNumber: contact
     };
 
-    await db.upsertBuyer(newBuyer);
+    setFormError('');
+    const { error } = await db.upsertBuyer(newBuyer);
+    if (error) { setFormError(notSavedMessage(error, 'The buyer')); return; }
     setBuyers([...buyers, newBuyer]);
     setName('');
     setContact('');
@@ -52,6 +57,8 @@ const BuyerTeam: React.FC = () => {
           </button>
         )}
       </div>
+
+      {pageError && <div className={errorBoxCls}>{pageError}</div>}
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {buyers.map(buyer => (
@@ -84,7 +91,12 @@ const BuyerTeam: React.FC = () => {
                <button className="flex-1 py-2 bg-slate-100 text-slate-600 rounded-xl font-bold text-xs hover:bg-slate-200 transition-colors">View Profile</button>
                {canManageBuyers && (
                  <button
-                   onClick={async () => { await db.deleteBuyer(buyer.id); setBuyers(buyers.filter(b => b.id !== buyer.id)); }}
+                   onClick={async () => {
+                     setPageError('');
+                     const { error } = await db.deleteBuyer(buyer.id);
+                     if (error) { setPageError(notSavedMessage(error, `Deleting ${buyer.name}`)); return; }
+                     setBuyers(buyers.filter(b => b.id !== buyer.id));
+                   }}
                    className="p-2 bg-rose-50 text-rose-400 rounded-xl hover:bg-rose-100 hover:text-rose-600 transition-colors"
                  >
                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" strokeWidth={2}/></svg>
@@ -109,7 +121,7 @@ const BuyerTeam: React.FC = () => {
                    <h2 className="text-lg md:text-2xl font-black text-slate-900">Add Buyer</h2>
                    <p className="text-[9px] md:text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">Register order placement personnel</p>
                 </div>
-                <button onClick={() => setShowAddModal(false)} className="p-2 hover:bg-slate-200 rounded-xl transition-colors"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M6 18L18 6M6 6l12 12" strokeWidth={2}/></svg></button>
+                <button onClick={() => { setShowAddModal(false); setFormError(''); }} className="p-2 hover:bg-slate-200 rounded-xl transition-colors"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M6 18L18 6M6 6l12 12" strokeWidth={2}/></svg></button>
              </div>
              <form onSubmit={handleAddBuyer} className="p-4 md:p-8 space-y-4 md:space-y-6">
                 <div>
@@ -134,6 +146,7 @@ const BuyerTeam: React.FC = () => {
                     required
                    />
                 </div>
+                {formError && <div className={errorBoxCls}>{formError}</div>}
                 <button type="submit" className="w-full py-4 md:py-5 bg-indigo-600 text-white rounded-xl md:rounded-[24px] font-black text-base md:text-lg shadow-xl shadow-indigo-100 hover:bg-indigo-700 transition-all active:scale-[0.98]">
                    Add to Team
                 </button>

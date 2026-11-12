@@ -4,6 +4,7 @@ import { CRMContext, generateId } from '../App';
 import { UserRole, Delivery, DeliveryStatus, ChallanStatus, Product } from '../types';
 import { deliveryLine, orderBelongsTo } from '../services/pricing';
 import { db } from '../services/db';
+import { notSavedMessage, errorBoxCls } from '../services/errors';
 import { Icons } from '../constants';
 
 const Deliveries: React.FC = () => {
@@ -28,6 +29,7 @@ const Deliveries: React.FC = () => {
 
   // State for per-item status change
   const [itemStatusIdx, setItemStatusIdx] = useState<number | null>(null);
+  const [saveError, setSaveError] = useState('');
   const [itemStatusValue, setItemStatusValue] = useState<ChallanStatus>(ChallanStatus.RETURNED);
   const [itemStatusDesc, setItemStatusDesc] = useState('');
 
@@ -154,7 +156,9 @@ const Deliveries: React.FC = () => {
       itemStatus: newChallanStatus,
       itemStatusDescription: statusDescription.trim()
     }));
-    await db.updateDeliveryFull(statusChangeTarget.id, newChallanStatus, statusDescription.trim(), updatedItems);
+    setSaveError('');
+    const { error } = await db.updateDeliveryFull(statusChangeTarget.id, newChallanStatus, statusDescription.trim(), updatedItems);
+    if (error) { setSaveError(notSavedMessage(error, 'The status change')); return; }
     const updatedDelivery = { ...statusChangeTarget, challanStatus: newChallanStatus, statusDescription: statusDescription.trim(), items: updatedItems };
     const newDeliveries = deliveries.map(d => d.id === statusChangeTarget.id ? updatedDelivery : d);
     setDeliveries(newDeliveries);
@@ -178,7 +182,9 @@ const Deliveries: React.FC = () => {
     const overallDesc = overallStatus !== delivery.challanStatus
       ? (overallStatus === ChallanStatus.PARTIAL_RETURNED ? 'Partial return' : delivery.statusDescription || '')
       : (delivery.statusDescription || '');
-    await db.updateDeliveryFull(delivery.id, overallStatus, overallDesc, updatedItems);
+    setSaveError('');
+    const { error } = await db.updateDeliveryFull(delivery.id, overallStatus, overallDesc, updatedItems);
+    if (error) { setSaveError(notSavedMessage(error, 'The item status change')); return; }
     const updatedDelivery = { ...delivery, challanStatus: overallStatus, statusDescription: overallDesc, items: updatedItems };
     const newDeliveries = deliveries.map(d => d.id === delivery.id ? updatedDelivery : d);
     setDeliveries(newDeliveries);
@@ -189,7 +195,9 @@ const Deliveries: React.FC = () => {
 
   const handleDeleteChallan = async (delivery: Delivery) => {
     if (!confirm(`Are you sure you want to delete challan ${delivery.challanNumber}? This action cannot be undone.`)) return;
-    await db.deleteDelivery(delivery.id);
+    setSaveError('');
+    const { error } = await db.deleteDelivery(delivery.id);
+    if (error) { setSaveError(notSavedMessage(error, `Deleting challan ${delivery.challanNumber}`)); return; }
     const newDeliveries = deliveries.filter(d => d.id !== delivery.id);
     setDeliveries(newDeliveries);
     setActiveChallan(null);
@@ -215,6 +223,8 @@ const Deliveries: React.FC = () => {
           Record Shipment
         </button>
       </div>
+
+      {saveError && !activeChallan && !statusChangeTarget && <div className={`${errorBoxCls} no-print`}>{saveError}</div>}
 
       <div className="bg-white rounded-2xl md:rounded-3xl border border-slate-200 shadow-sm overflow-hidden no-print">
         {/* Filters */}
@@ -337,9 +347,10 @@ const Deliveries: React.FC = () => {
                       <button onClick={() => handleDeleteChallan(activeChallan)} className="px-3 md:px-5 py-2 bg-red-600 text-white rounded-xl font-black text-[9px] md:text-[10px] uppercase tracking-widest hover:bg-red-700 transition-all">Delete</button>
                     )}
                     <button onClick={handlePrint} className="px-3 md:px-5 py-2 bg-indigo-600 text-white rounded-xl font-black text-[9px] md:text-[10px] uppercase tracking-widest flex items-center gap-1 md:gap-2"><Icons.Check /> Print</button>
-                    <button onClick={() => setActiveChallan(null)} className="p-2 hover:bg-slate-100 rounded-xl transition-all"><Icons.Logout /></button>
+                    <button onClick={() => { setActiveChallan(null); setSaveError(''); }} className="p-2 hover:bg-slate-100 rounded-xl transition-all"><Icons.Logout /></button>
                  </div>
               </div>
+              {saveError && !statusChangeTarget && <div className={`${errorBoxCls} mx-4 md:mx-6 mt-4 no-print`}>{saveError}</div>}
 
               <div id="challan-printable" className="p-4 md:p-12 print:p-0 bg-white overflow-y-auto flex-1">
                  <div className="flex flex-col sm:flex-row justify-between items-start gap-4 mb-6 md:mb-12">
@@ -500,7 +511,7 @@ const Deliveries: React.FC = () => {
                 <h2 className="text-lg md:text-xl font-black">Change Challan Status</h2>
                 <p className="text-[9px] md:text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-widest">{statusChangeTarget.challanNumber}</p>
               </div>
-              <button onClick={() => { setStatusChangeTarget(null); setNewChallanStatus(ChallanStatus.ACTIVE); setStatusDescription(''); }} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
+              <button onClick={() => { setStatusChangeTarget(null); setNewChallanStatus(ChallanStatus.ACTIVE); setStatusDescription(''); setSaveError(''); }} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
                 <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
@@ -524,8 +535,9 @@ const Deliveries: React.FC = () => {
                   />
                 </div>
               )}
+              {saveError && <div className={errorBoxCls}>{saveError}</div>}
               <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 md:gap-4 pt-4 border-t border-slate-100">
-                <button type="button" onClick={() => { setStatusChangeTarget(null); setNewChallanStatus(ChallanStatus.ACTIVE); setStatusDescription(''); }} className="px-6 md:px-8 py-3 md:py-4 rounded-xl md:rounded-2xl font-black text-xs uppercase tracking-widest text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors">Cancel</button>
+                <button type="button" onClick={() => { setStatusChangeTarget(null); setNewChallanStatus(ChallanStatus.ACTIVE); setStatusDescription(''); setSaveError(''); }} className="px-6 md:px-8 py-3 md:py-4 rounded-xl md:rounded-2xl font-black text-xs uppercase tracking-widest text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors">Cancel</button>
                 <button
                   type="button"
                   onClick={handleStatusChange}

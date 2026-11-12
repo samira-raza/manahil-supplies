@@ -4,6 +4,7 @@ import { CRMContext } from '../App';
 import { UserRole, User } from '../types';
 import { Icons } from '../constants';
 import { db } from '../services/db';
+import { notSavedMessage, errorBoxCls } from '../services/errors';
 
 const generatePassword = () => {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
@@ -24,6 +25,7 @@ const UserManagement: React.FC = () => {
   const [viewingUser, setViewingUser] = useState<User | null>(null);
   const [createdCredentials, setCreatedCredentials] = useState<{ name: string; mobile: string; password: string } | null>(null);
   const [copied, setCopied] = useState(false);
+  const [addError, setAddError] = useState('');
 
   if (!ctx) return null;
   const { users, setUsers, currentUser, vendors } = ctx;
@@ -118,7 +120,9 @@ const UserManagement: React.FC = () => {
       mustResetPassword: true
     };
 
-    await db.upsertUser(newUser);
+    setAddError('');
+    const { error } = await db.upsertUser(newUser);
+    if (error) { setAddError(notSavedMessage(error, 'The new account')); return; }
     setUsers([...users, newUser]);
 
     // Show credentials modal
@@ -230,7 +234,7 @@ const UserManagement: React.FC = () => {
           <div className="bg-white rounded-2xl md:rounded-3xl w-full max-w-md shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 my-4 md:my-8 max-h-[95vh] flex flex-col">
              <div className="p-4 md:p-6 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center shrink-0">
                 <h2 className="text-lg md:text-xl font-bold">{isVendor ? 'Add Staff Member' : 'Create New Account'}</h2>
-                <button onClick={() => setShowAddModal(false)} className="p-2 hover:bg-slate-200 rounded-xl transition-colors"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M6 18L18 6M6 6l12 12" strokeWidth={2} /></svg></button>
+                <button onClick={() => { setShowAddModal(false); setAddError(''); }} className="p-2 hover:bg-slate-200 rounded-xl transition-colors"><svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M6 18L18 6M6 6l12 12" strokeWidth={2} /></svg></button>
              </div>
              <div className="p-4 md:p-8 space-y-4 overflow-y-auto flex-1">
                 <div>
@@ -345,6 +349,7 @@ const UserManagement: React.FC = () => {
                    {!newUserRole && !isVendor && <span> Select a role to see permissions.</span>}
                 </div>
 
+                {addError && <div className={errorBoxCls}>{addError}</div>}
                 <button
                   onClick={handleAddUser}
                   disabled={!newUserName || !newUserMobile || (!isVendor && !newUserRole)}
