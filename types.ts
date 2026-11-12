@@ -1,8 +1,25 @@
 
+// Categories (agreed 12 Nov 2026, D38). Three names, each unique:
+// name = the word used in product names (e.g. MTCN), fullName = shown in lists (Master Carton),
+// shortCode = used in product codes (MC).
 export interface Category {
   id: string;
   name: string;
+  fullName?: string;
+  shortCode?: string;
   description?: string;
+  createdBy?: string;
+  createdAt?: string;
+}
+
+export interface CategoryActivity {
+  id: string;
+  categoryId?: string;
+  type: 'SET_UP' | 'CREATED' | 'FULL_NAME_CHANGED' | 'WORD_CHANGED' | 'CODE_CHANGED' | 'DELETED';
+  details: string;
+  userId?: string;
+  userName?: string;
+  at: string;
 }
 
 // Brands (agreed 12 Nov 2026, D37). A parent brand has no parentId and has initials.
@@ -134,7 +151,8 @@ export type ProductActivityType =
   | 'PRICE_ADDED' | 'PRICE_EDITED' | 'PRICE_DELETED'
   | 'ARCHIVED' | 'RESTORED'
   | 'COPIED_FROM'
-  | 'LINK_ADDED' | 'LINK_REMOVED';
+  | 'LINK_ADDED' | 'LINK_REMOVED'
+  | 'CATEGORY_CHANGED';
 
 export interface ProductActivity {
   id: string;
@@ -150,7 +168,8 @@ export interface Product {
   id: string;
   title: string;
   brand: string;
-  category: string;
+  category: string;   // the category's word used in product names (kept for older app versions)
+  categoryId?: string; // the category itself (D38)
   itemName: string;
   description: string;
   unitSize: string;

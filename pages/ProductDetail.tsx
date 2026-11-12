@@ -3,9 +3,10 @@ import React, { useContext, useMemo, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { CRMContext, generateId } from '../App';
 import { Icons } from '../constants';
-import { Brand, BrandSet, Product, ProductActivity, ProductActivityType, ProductPrice, ProductSupplier, UserRole } from '../types';
+import { Brand, BrandSet, Category, Product, ProductActivity, ProductActivityType, ProductPrice, ProductSupplier, UserRole } from '../types';
 import { buildProductTitle, disabledBrandNames, entryText, productBrandParts } from '../services/brands';
 import { db } from '../services/db';
+import { categoryOf, categoryFullName, categoryLabel, sortCategories } from '../services/categories';
 import { localToday, mainSupplier, activeSuppliers, orderedSuppliers, priceOn, priceRecordOn, sortPrices, supplierOf, hasSupplier } from '../services/pricing';
 import { productPermissions } from '../services/permissions';
 
@@ -215,6 +216,7 @@ const ProductDetail: React.FC = () => {
   const sizeLabel = product.unitSize ? `${product.unitSize}${product.measuringUnit ? ` ${product.measuringUnit}` : ''}` : '';
   // The parent brand's optional short label shows under the name; disabled brands get a note
   const brandLabel = ctx.brands.find(b => b.id === product.brandParentId)?.label;
+  const categoryName = categoryFullName(categoryOf(product, ctx.categories)) || product.category;
   const disabledBrands = disabledBrandNames(product, ctx.brands, ctx.brandSets);
   const activityShown = showAllActivity ? product.activity : product.activity.slice(0, 10);
   const btn = "flex-1 md:flex-none px-4 md:px-5 py-2.5 md:py-3 bg-white border border-slate-200 rounded-xl font-semibold text-slate-600 hover:bg-slate-50 transition-all shadow-sm text-sm";
@@ -231,7 +233,7 @@ const ProductDetail: React.FC = () => {
             <h1 className="text-lg md:text-2xl font-black text-slate-900 leading-tight tracking-tight break-words">{product.title}</h1>
             {sizeLabel && <p className="text-slate-600 text-xs md:text-sm font-bold mt-1">{sizeLabel}</p>}
             {brandLabel && <p className="text-slate-500 text-xs md:text-sm font-bold mt-0.5">{brandLabel}</p>}
-            <p className="text-slate-500 text-xs md:text-sm font-medium mt-1">Added: {product.dateAdded}</p>
+            <p className="text-slate-500 text-xs md:text-sm font-medium mt-1">{categoryName ? `Category: ${categoryName} · ` : ''}Added: {product.dateAdded}</p>
           </div>
         </div>
         {(can.createProducts || can.editProductInfo || can.addPrices || can.archiveProducts || can.deleteProducts) && <div className="flex gap-2 md:gap-3 flex-wrap">
@@ -504,7 +506,7 @@ const ProductDetail: React.FC = () => {
             <div className="bg-white rounded-2xl md:rounded-[40px] border border-slate-200 shadow-sm overflow-hidden">
               <div className="p-4 md:p-8 border-b border-slate-50 bg-slate-50/30">
                 <h3 className="text-base md:text-lg font-black text-slate-900">Activity</h3>
-                <p className="text-[10px] md:text-xs text-slate-500 font-medium mt-1">Every supplier and price change on this product, with who made it</p>
+                <p className="text-[10px] md:text-xs text-slate-500 font-medium mt-1">Every change to suppliers, prices, links and category on this product, with who made it</p>
               </div>
               <div className="p-4 md:p-8 space-y-3">
                 {activityShown.map(a => (
@@ -543,7 +545,15 @@ const ProductDetail: React.FC = () => {
               setActionError(`The changes were not saved: ${error.message}`);
               return;
             }
-            setProducts(prev => prev.map(p => p.id === id ? updated : p));
+            // A move to another category is recorded in the product's history (D38)
+            const fromCat = categoryOf(product, ctx.categories);
+            const toCat = categoryOf(updated, ctx.categories);
+            if ((fromCat?.id || product.category) !== (toCat?.id || updated.category)) {
+              await logActivity(updated, 'CATEGORY_CHANGED',
+                `Moved from ${categoryFullName(fromCat) || product.category} to ${categoryFullName(toCat) || updated.category}`);
+            } else {
+              setProducts(prev => prev.map(p => p.id === id ? updated : p));
+            }
             setShowMetadataModal(false);
           }}
         />
@@ -683,7 +693,7 @@ const ProductDetail: React.FC = () => {
 // Metadata Edit Modal Component
 const MetadataModal: React.FC<{
   product: any;
-  categories: any[];
+  categories: Category[];
   measuringUnits: any[];
   products: any[];
   onClose: () => void;
@@ -733,7 +743,7 @@ const MetadataModal: React.FC<{
     const sameName = products.find((p: any) => p.id !== product.id && p.title.trim().toLowerCase() === generatedTitle.trim().toLowerCase());
     if (sameName) { setNameError(`Another product already has this name: "${sameName.title}". Change the item name, e.g. add "Large".`); return; }
     // Linked products are managed on the product page, not here
-    onSave({ ...formData, title: generatedTitle });
+    onSave({ ...formData, title: generatedTitle, categoryId: categories.find(c => c.name === formData.category)?.id });
   };
 
   return (
@@ -764,10 +774,15 @@ const MetadataModal: React.FC<{
             <div>
               <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Item Category*</label>
               <select name="category" value={formData.category} onChange={handleChange} className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm" required>
-                {categories.map(cat => (
-                  <option key={cat.id} value={cat.name}>{cat.name}</option>
+                {!categories.some(c => c.name === formData.category) && <option value={formData.category}>{formData.category}</option>}
+                {sortCategories(categories).map(cat => (
+                  <option key={cat.id} value={cat.name}>{categoryLabel(cat)}</option>
                 ))}
               </select>
+              <p className="text-[11px] text-slate-400 mt-1">
+                {categories.find(c => c.name === formData.category)?.shortCode ? `Short code: ${categories.find(c => c.name === formData.category)?.shortCode}. ` : ''}
+                {formData.category !== product.category ? 'Moving it to another category is recorded in the product history.' : 'You can move the product to another category at any time.'}
+              </p>
             </div>
             <div className="md:col-span-2">
               <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Item Name*</label>

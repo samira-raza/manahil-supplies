@@ -8,6 +8,7 @@ import { db } from '../services/db';
 import { localToday, mainSupplier, activeSuppliers, orderedSuppliers, priceOn, sortPrices, hasSupplier, deliveryLine } from '../services/pricing';
 import { productPermissions } from '../services/permissions';
 import { brandEntries, entryKey, entryText, buildProductTitle, productBrandParts, setChildNames, parentBrands, childBrandsOf } from '../services/brands';
+import { sortCategories, categoryLabel } from '../services/categories';
 
 // The brand picked on the form is one entry: "parentId" (parent alone) or "parentId|setId" (a brand set)
 const splitEntry = (key: string) => { const [parentId, setId] = key.split('|'); return { parentId: parentId || undefined, setId: setId || undefined }; };
@@ -72,7 +73,7 @@ const Products: React.FC = () => {
   useEffect(() => {
     const categories = ctx?.categories || [];
     if (showAddModal && categories.length > 0 && !formData.category) {
-      setFormData(prev => ({ ...prev, category: categories[0].name }));
+      setFormData(prev => ({ ...prev, category: sortCategories(categories)[0].name }));
     }
   }, [showAddModal, ctx?.categories]);
 
@@ -157,7 +158,7 @@ const Products: React.FC = () => {
   const resetForm = () => {
     setFormData({
       brand: '',
-      category: categories[0]?.name || '',
+      category: sortCategories(categories)[0]?.name || '',
       itemName: '',
       description: '',
       unitSize: '',
@@ -282,6 +283,7 @@ const Products: React.FC = () => {
       brandParentId: picked.parentId,
       brandSetId: picked.setId,
       category: formData.category,
+      categoryId: categories.find(c => c.name === formData.category)?.id,
       itemName: formData.itemName,
       description: formData.description,
       unitSize: formData.unitSize,
@@ -433,8 +435,8 @@ const Products: React.FC = () => {
               className="px-4 py-3 rounded-xl bg-white border border-slate-200 focus:ring-2 focus:ring-indigo-500 transition-all text-sm font-medium min-w-[140px]"
             >
               <option value="">All Categories</option>
-              {categories.map(cat => (
-                <option key={cat.id} value={cat.name}>{cat.name}</option>
+              {sortCategories(categories).map(cat => (
+                <option key={cat.id} value={cat.name}>{categoryLabel(cat)}</option>
               ))}
             </select>
             {!isSupplierRole && <select
@@ -685,10 +687,13 @@ const Products: React.FC = () => {
                   <div>
                     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Item Category*</label>
                     <select name="category" value={formData.category} onChange={handleInputChange} className="w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm" required>
-                      {categories.map(cat => (
-                        <option key={cat.id} value={cat.name}>{cat.name}</option>
+                      {sortCategories(categories).map(cat => (
+                        <option key={cat.id} value={cat.name}>{categoryLabel(cat)}</option>
                       ))}
                     </select>
+                    {categories.find(c => c.name === formData.category)?.shortCode && (
+                      <p className="text-[11px] text-slate-400 mt-1">Short code: <span className="font-black text-slate-600">{categories.find(c => c.name === formData.category)?.shortCode}</span> (set in Categories)</p>
+                    )}
                   </div>
                   <div className="md:col-span-2">
                     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Item Name*</label>
