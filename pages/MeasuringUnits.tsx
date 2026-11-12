@@ -4,12 +4,16 @@ import { CRMContext } from '../App';
 import { UserRole, MeasuringUnit } from '../types';
 import { Icons } from '../constants';
 import { db } from '../services/db';
+import { notSavedMessage, errorBoxCls } from '../services/errors';
 
 const MeasuringUnits: React.FC = () => {
   const ctx = useContext(CRMContext);
   const [showAddModal, setShowAddModal] = useState(false);
   const [editingUnit, setEditingUnit] = useState<MeasuringUnit | null>(null);
   const [formData, setFormData] = useState({ name: '', symbol: '' });
+  const [formError, setFormError] = useState('');
+  const [editError, setEditError] = useState('');
+  const [pageError, setPageError] = useState('');
 
   if (!ctx) return null;
   const { measuringUnits, setMeasuringUnits, currentUser } = ctx;
@@ -28,7 +32,9 @@ const MeasuringUnits: React.FC = () => {
       symbol: formData.symbol,
     };
 
-    await db.upsertMeasuringUnit(newUnit);
+    setFormError('');
+    const { error } = await db.upsertMeasuringUnit(newUnit);
+    if (error) { setFormError(notSavedMessage(error, 'The unit')); return; }
     setMeasuringUnits([...measuringUnits, newUnit]);
     setShowAddModal(false);
     setFormData({ name: '', symbol: '' });
@@ -36,7 +42,9 @@ const MeasuringUnits: React.FC = () => {
 
   const handleDelete = async (id: string) => {
     if (!window.confirm('Are you sure you want to delete this measuring unit?')) return;
-    await db.deleteMeasuringUnit(id);
+    setPageError('');
+    const { error } = await db.deleteMeasuringUnit(id);
+    if (error) { setPageError(notSavedMessage(error, 'Deleting the unit')); return; }
     setMeasuringUnits(measuringUnits.filter(u => u.id !== id));
   };
 
@@ -57,6 +65,8 @@ const MeasuringUnits: React.FC = () => {
           </button>
         )}
       </div>
+
+      {pageError && <div className={errorBoxCls}>{pageError}</div>}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
         {measuringUnits.map(unit => (
@@ -113,6 +123,7 @@ const MeasuringUnits: React.FC = () => {
                     required
                   />
                 </div>
+                {formError && <div className={errorBoxCls}>{formError}</div>}
                 <button
                   type="submit"
                   className="w-full py-4 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-100"
@@ -127,9 +138,12 @@ const MeasuringUnits: React.FC = () => {
       {editingUnit && (
         <EditUnitModal
           unit={editingUnit}
-          onClose={() => setEditingUnit(null)}
+          error={editError}
+          onClose={() => { setEditingUnit(null); setEditError(''); }}
           onSave={async (updated) => {
-            await db.upsertMeasuringUnit(updated);
+            setEditError('');
+            const { error } = await db.upsertMeasuringUnit(updated);
+            if (error) { setEditError(notSavedMessage(error)); return; }
             setMeasuringUnits(measuringUnits.map(u => u.id === updated.id ? updated : u));
             setEditingUnit(null);
           }}
@@ -141,9 +155,10 @@ const MeasuringUnits: React.FC = () => {
 
 const EditUnitModal: React.FC<{
   unit: MeasuringUnit;
+  error?: string;
   onClose: () => void;
   onSave: (updated: MeasuringUnit) => void;
-}> = ({ unit, onClose, onSave }) => {
+}> = ({ unit, error, onClose, onSave }) => {
   const [formData, setFormData] = useState({
     name: unit.name,
     symbol: unit.symbol,
@@ -191,6 +206,7 @@ const EditUnitModal: React.FC<{
               required
             />
           </div>
+          {error && <div className={errorBoxCls}>{error}</div>}
           <div className="flex flex-col-reverse sm:flex-row gap-3">
             <button
               type="button"

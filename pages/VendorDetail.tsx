@@ -6,6 +6,7 @@ import { UserRole, Vendor, Product, BankAccount, Payment, Order, Delivery, Deliv
 import { deliveryLine } from '../services/pricing';
 import { Icons } from '../constants';
 import { db } from '../services/db';
+import { notSavedMessage, errorBoxCls } from '../services/errors';
 
 const VendorDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
@@ -18,6 +19,7 @@ const VendorDetail: React.FC = () => {
   const [viewingDelivery, setViewingDelivery] = useState<Delivery | null>(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [showAdjustmentModal, setShowAdjustmentModal] = useState(false);
+  const [saveError, setSaveError] = useState('');
 
   const [paymentForm, setPaymentForm] = useState({
     amount: '',
@@ -135,7 +137,9 @@ const VendorDetail: React.FC = () => {
       reference: paymentForm.reference,
       note: paymentForm.note
     };
-    await db.insertPayment(newPayment);
+    setSaveError('');
+    const { error } = await db.insertPayment(newPayment);
+    if (error) { setSaveError(notSavedMessage(error, 'The payment')); return; }
     setPayments(prev => [...prev, newPayment]);
     setShowPaymentModal(false);
     setPaymentForm({ amount: '', method: 'cash', bankAccount: '', invoiceNumber: '', reference: '', note: '' });
@@ -154,7 +158,9 @@ const VendorDetail: React.FC = () => {
       method: 'adjustment',
       note: adjustmentForm.note || (adjustmentForm.type === 'increase' ? 'Balance increase adjustment' : 'Balance decrease adjustment')
     };
-    await db.insertPayment(newPayment);
+    setSaveError('');
+    const { error } = await db.insertPayment(newPayment);
+    if (error) { setSaveError(notSavedMessage(error, 'The adjustment')); return; }
     setPayments(prev => [...prev, newPayment]);
     setShowAdjustmentModal(false);
     setAdjustmentForm({ amount: '', type: 'increase', note: '' });
@@ -394,7 +400,7 @@ const VendorDetail: React.FC = () => {
                   <h2 className="text-lg md:text-xl font-black">Post Payment</h2>
                   <p className="text-[9px] md:text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-widest">{vendor.name}</p>
                 </div>
-                <button onClick={() => { setShowPaymentModal(false); setPaymentForm({ amount: '', method: 'cash', bankAccount: '', invoiceNumber: '', reference: '', note: '' }); }} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
+                <button onClick={() => { setShowPaymentModal(false); setSaveError(''); setPaymentForm({ amount: '', method: 'cash', bankAccount: '', invoiceNumber: '', reference: '', note: '' }); }} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
                   <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                 </button>
               </div>
@@ -436,6 +442,7 @@ const VendorDetail: React.FC = () => {
                   <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Reference / Note</label>
                   <input type="text" value={paymentForm.reference} onChange={(e) => setPaymentForm({...paymentForm, reference: e.target.value})} className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none font-bold text-sm" placeholder="e.g. Cheque #1234" />
                 </div>
+                {saveError && <div className={errorBoxCls}>{saveError}</div>}
                 <button type="submit" disabled={(paymentForm.method === 'bank' && (!paymentForm.bankAccount || vendorBanks.length === 0)) || (paymentForm.method === 'invoice' && !paymentForm.invoiceNumber)} className="w-full py-4 md:py-5 bg-indigo-600 text-white rounded-xl md:rounded-[24px] font-black text-base md:text-lg shadow-xl hover:bg-indigo-700 transition-all disabled:opacity-50 disabled:cursor-not-allowed">Record Transaction</button>
               </form>
             </div>
@@ -452,7 +459,7 @@ const VendorDetail: React.FC = () => {
                 <h2 className="text-lg md:text-xl font-black">Post Adjustment</h2>
                 <p className="text-[9px] md:text-[10px] text-slate-400 font-bold mt-1 uppercase tracking-widest">{vendor.name}</p>
               </div>
-              <button onClick={() => { setShowAdjustmentModal(false); setAdjustmentForm({ amount: '', type: 'increase', note: '' }); }} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
+              <button onClick={() => { setShowAdjustmentModal(false); setSaveError(''); setAdjustmentForm({ amount: '', type: 'increase', note: '' }); }} className="p-2 hover:bg-slate-200 rounded-full transition-colors">
                 <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
               </button>
             </div>
@@ -473,6 +480,7 @@ const VendorDetail: React.FC = () => {
                 <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Reason / Note*</label>
                 <input type="text" value={adjustmentForm.note} onChange={(e) => setAdjustmentForm({...adjustmentForm, note: e.target.value})} className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-amber-500 outline-none font-bold text-sm" placeholder="e.g. Discount agreed, Correction for invoice #123" required />
               </div>
+              {saveError && <div className={errorBoxCls}>{saveError}</div>}
               <button type="submit" className="w-full py-4 md:py-5 bg-amber-500 text-white rounded-xl md:rounded-[24px] font-black text-base md:text-lg shadow-xl hover:bg-amber-600 transition-all">Record Adjustment</button>
             </form>
           </div>
@@ -484,9 +492,12 @@ const VendorDetail: React.FC = () => {
         <EditVendorModal
           vendor={editingVendor}
           isSuperAdmin={!!isSuperAdmin}
-          onClose={() => setEditingVendor(null)}
+          error={saveError}
+          onClose={() => { setEditingVendor(null); setSaveError(''); }}
           onSave={async (updated) => {
-            await db.upsertVendor(updated);
+            setSaveError('');
+            const { error } = await db.upsertVendor(updated);
+            if (error) { setSaveError(notSavedMessage(error, 'The supplier details')); return; }
             setVendors(prev => prev.map(v => v.id === updated.id ? updated : v));
             setEditingVendor(null);
           }}
@@ -499,9 +510,12 @@ const VendorDetail: React.FC = () => {
           payment={editingPayment}
           vendorBanks={vendor.bankAccounts || []}
           vendorName={vendor.name}
-          onClose={() => setEditingPayment(null)}
+          error={saveError}
+          onClose={() => { setEditingPayment(null); setSaveError(''); }}
           onSave={async (updated) => {
-            await db.upsertPayment(updated);
+            setSaveError('');
+            const { error } = await db.upsertPayment(updated);
+            if (error) { setSaveError(notSavedMessage(error, 'The payment change')); return; }
             setPayments(prev => prev.map(p => p.id === updated.id ? updated : p));
             setEditingPayment(null);
           }}
@@ -524,8 +538,8 @@ const VendorDetail: React.FC = () => {
 // ===== Sub-Components (moved from Suppliers.tsx) =====
 
 const EditPaymentModal: React.FC<{
-  payment: Payment; vendorBanks: BankAccount[]; vendorName: string; onClose: () => void; onSave: (updated: Payment) => void;
-}> = ({ payment, vendorBanks, vendorName, onClose, onSave }) => {
+  payment: Payment; vendorBanks: BankAccount[]; vendorName: string; error?: string; onClose: () => void; onSave: (updated: Payment) => void;
+}> = ({ payment, vendorBanks, vendorName, error, onClose, onSave }) => {
   const [formData, setFormData] = useState({
     amount: payment.amount.toString(), method: (payment.method || 'cash') as 'cash' | 'bank' | 'invoice',
     bankAccount: payment.bankAccount || '', invoiceNumber: payment.invoiceNumber || '', reference: payment.reference || '', note: payment.note || '', date: payment.date,
@@ -549,6 +563,7 @@ const EditPaymentModal: React.FC<{
           {formData.method === 'bank' && <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Bank Account*</label>{vendorBanks.length > 0 ? <select value={formData.bankAccount} onChange={(e) => setFormData({...formData, bankAccount: e.target.value})} className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none font-bold text-sm" required><option value="">-- Select --</option>{vendorBanks.map((b, i) => <option key={i} value={`${b.bankTitle} - ${b.accountNumber}`}>{b.bankTitle} - {b.accountTitle} ({b.accountNumber})</option>)}</select> : <div className="px-4 py-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-700 text-xs font-bold">No bank accounts found.</div>}</div>}
           {formData.method === 'invoice' && <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Invoice Number*</label><input type="text" value={formData.invoiceNumber} onChange={(e) => setFormData({...formData, invoiceNumber: e.target.value})} className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none font-bold text-sm" placeholder="e.g. INV-2024-001" required /></div>}
           <div><label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Reference / Note</label><input type="text" value={formData.reference} onChange={(e) => setFormData({...formData, reference: e.target.value})} className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none font-bold text-sm" placeholder="e.g. Cheque #1234" /></div>
+          {error && <div className={errorBoxCls}>{error}</div>}
           <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 md:gap-4 pt-4 md:pt-6 border-t border-slate-100">
             <button type="button" onClick={onClose} className="px-6 md:px-8 py-3 md:py-4 rounded-xl md:rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors uppercase tracking-widest text-[10px]">Cancel</button>
             <button type="submit" disabled={(formData.method === 'bank' && (!formData.bankAccount || vendorBanks.length === 0)) || (formData.method === 'invoice' && !formData.invoiceNumber)} className="px-8 md:px-12 py-3 md:py-4 rounded-xl md:rounded-2xl font-black text-white bg-indigo-600 hover:bg-indigo-700 shadow-xl shadow-indigo-100 transition-all uppercase tracking-widest text-[10px] disabled:opacity-50 disabled:cursor-not-allowed">Save Changes</button>
@@ -560,8 +575,8 @@ const EditPaymentModal: React.FC<{
 };
 
 const EditVendorModal: React.FC<{
-  vendor: Vendor; isSuperAdmin: boolean; onClose: () => void; onSave: (updated: Vendor) => void;
-}> = ({ vendor, isSuperAdmin, onClose, onSave }) => {
+  vendor: Vendor; isSuperAdmin: boolean; error?: string; onClose: () => void; onSave: (updated: Vendor) => void;
+}> = ({ vendor, isSuperAdmin, error, onClose, onSave }) => {
   const [formData, setFormData] = useState({
     name: vendor.name, primaryContactName: vendor.primaryContactName, primaryMobile: vendor.primaryMobile,
     email: vendor.contact.email, address: vendor.contact.address, openingBalance: (vendor.openingBalance || 0).toString(),
@@ -605,6 +620,7 @@ const EditVendorModal: React.FC<{
               </div>
             ))}
           </div>
+          {error && <div className={errorBoxCls}>{error}</div>}
           <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 md:gap-4 pt-6 md:pt-8 border-t border-slate-100">
             <button type="button" onClick={onClose} className="px-6 md:px-8 py-3 md:py-4 rounded-xl md:rounded-2xl font-black text-xs uppercase tracking-widest text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors">Cancel</button>
             <button type="submit" className="px-8 md:px-12 py-3 md:py-4 rounded-xl md:rounded-2xl font-black text-xs uppercase tracking-widest text-white bg-indigo-600 hover:bg-indigo-700 shadow-2xl shadow-indigo-200 transition-all active:scale-[0.98]">Save Changes</button>

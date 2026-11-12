@@ -16,6 +16,7 @@ import Brands from './pages/Brands';
 import MeasuringUnits from './pages/MeasuringUnits';
 import BuyerTeam from './pages/BuyerTeam';
 import { supabase } from './services/supabase';
+import { notSavedMessage, errorBoxCls } from './services/errors';
 import {
   vendorFromDb, productFromDb, orderFromDb, deliveryFromDb,
   paymentFromDb, userFromDb, buyerFromDb, categoryFromDb, measuringUnitFromDb,
@@ -49,11 +50,14 @@ const useCRMStore = () => {
   const [buyers, setBuyers] = useState<Buyer[]>([]);
   const [dispatchBucket, setDispatchBucket] = useState<StagedDispatchItem[]>([]);
   const [loading, setLoading] = useState(true);
+  // BUG-5: set when some data could not be loaded, so the screens are not mistaken for complete
+  const [loadError, setLoadError] = useState('');
 
   // Load all data from Supabase on mount
   useEffect(() => {
     const loadAll = async () => {
       setLoading(true);
+      let loadResults: { error: any }[] = [];
       const [
         { data: usersData },
         { data: vendorsData },
@@ -73,7 +77,7 @@ const useCRMStore = () => {
         { data: brandSetMembersData },
         { data: brandActivityData },
         { data: categoryActivityData },
-      ] = await Promise.all([
+      ] = (loadResults = await Promise.all([
         supabase.from('users').select('*'),
         supabase.from('vendors').select('*'),
         supabase.from('products').select('*'),
@@ -92,7 +96,13 @@ const useCRMStore = () => {
         supabase.from('brand_set_members').select('*'),
         supabase.from('brand_activity').select('*').order('at', { ascending: false }),
         supabase.from('category_activity').select('*').order('at', { ascending: false }),
-      ]);
+      ]));
+
+      // product_links (index 12) may be missing on an older database; the app falls back to the old column
+      const failedLoads = loadResults.filter((r, i) => r.error && i !== 12);
+      setLoadError(failedLoads.length > 0
+        ? `Some information could not be loaded, so lists may be incomplete. Check your internet connection and refresh the page before making changes. (Details: ${failedLoads[0].error?.message || 'unknown error'})`
+        : '');
 
       setUsers((usersData || []).map(userFromDb));
       setVendors((vendorsData || []).map(vendorFromDb));
@@ -209,7 +219,8 @@ const useCRMStore = () => {
       items: bucket.map(({ productTitle, ...rest }) => rest)
     };
 
-    await supabase.from('deliveries').insert(deliveryToDb(newDelivery));
+    const { error: insertError } = await supabase.from('deliveries').insert(deliveryToDb(newDelivery));
+    if (insertError) return notSavedMessage(insertError, `Challan ${challanNumber}`);
 
     // Use functional updates to guarantee latest state
     console.log('[finalizeChallan] newDelivery items:', JSON.stringify(newDelivery.items));
@@ -255,6 +266,7 @@ const useCRMStore = () => {
     });
     setDispatchBucket([]);
     alert(`Challan ${challanNumber} generated for ${bucket.length} items.`);
+    return '';
   };
 
   // Filter vendors for admin users based on their allowedVendorIds
@@ -268,7 +280,7 @@ const useCRMStore = () => {
     categoryActivity, setCategoryActivity,
     measuringUnits, setMeasuringUnits,
     orders, setOrders, deliveries, setDeliveries, users, setUsers, payments, setPayments, buyers, setBuyers,
-    dispatchBucket, setDispatchBucket, finalizeChallan, recalculateOrderStatuses, loading
+    dispatchBucket, setDispatchBucket, finalizeChallan, recalculateOrderStatuses, loading, loadError
   };
 };
 
@@ -278,14 +290,18 @@ const ChallanBucketUI = () => {
   const ctx = React.useContext(CRMContext);
   const [challanNo, setChallanNo] = useState('');
   const [isFinalizing, setIsFinalizing] = useState(false);
+  const [issueError, setIssueError] = useState('');
   
   if (!ctx || ctx.dispatchBucket.length === 0) return null;
   const { dispatchBucket, setDispatchBucket, finalizeChallan } = ctx;
 
-  const handleIssue = (e: React.FormEvent) => {
+  const handleIssue = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!challanNo) { alert("Please provide a Challan Number"); return; }
-    finalizeChallan(challanNo);
+    setIssueError('');
+    // If saving fails, the bucket and the typed challan number stay, so it can be tried again
+    const failed = await finalizeChallan(challanNo);
+    if (failed) { setIssueError(failed); return; }
     setChallanNo('');
     setIsFinalizing(false);
   };
@@ -319,7 +335,7 @@ const ChallanBucketUI = () => {
                     <h2 className="text-lg md:text-xl font-black text-slate-900">Finalize Dispatch</h2>
                     <p className="text-[9px] md:text-[10px] text-slate-400 font-bold uppercase tracking-widest">Multi-order Challan Sequence</p>
                  </div>
-                 <button onClick={() => setIsFinalizing(false)} className="p-2 md:p-3 hover:bg-slate-200 rounded-xl md:rounded-2xl transition-all"><Icons.Logout /></button>
+                 <button onClick={() => { setIsFinalizing(false); setIssueError(''); }} className="p-2 md:p-3 hover:bg-slate-200 rounded-xl md:rounded-2xl transition-all"><Icons.Logout /></button>
               </div>
               <form onSubmit={handleIssue} className="p-4 md:p-8 space-y-4 md:space-y-6 overflow-y-auto flex-1">
                  <div>
@@ -337,6 +353,7 @@ const ChallanBucketUI = () => {
                       </div>
                     ))}
                  </div>
+                 {issueError && <div className={errorBoxCls}>{issueError}</div>}
                  <button type="submit" className="w-full py-5 bg-indigo-600 text-white rounded-[24px] font-black uppercase tracking-widest shadow-xl shadow-indigo-100">Issue Document</button>
               </form>
            </div>
@@ -488,7 +505,8 @@ const ResetPasswordPage: React.FC<{ user: User; onComplete: () => void }> = ({ u
     if (newPassword !== confirmPassword) { setError('Passwords do not match'); return; }
 
     const updatedUser: User = { ...user, password: newPassword, mustResetPassword: false };
-    await supabase.from('users').update(userToDb(updatedUser)).eq('id', user.id);
+    const { error: saveError } = await supabase.from('users').update(userToDb(updatedUser)).eq('id', user.id);
+    if (saveError) { setError(notSavedMessage(saveError, 'Your new password')); return; }
 
     if (ctx) {
       ctx.setUsers(ctx.users.map(u => u.id === user.id ? updatedUser : u));
@@ -608,6 +626,11 @@ const App: React.FC = () => {
 
   return (
     <CRMContext.Provider value={store}>
+      {store.loadError && (
+        <div className="fixed top-0 inset-x-0 z-[400] p-2 md:p-3 flex justify-center pointer-events-none">
+          <div className={`${errorBoxCls} max-w-3xl w-full shadow-lg pointer-events-auto`}>{store.loadError}</div>
+        </div>
+      )}
       <HashRouter>
         {!store.currentUser ? <Routes><Route path="*" element={<LoginPage />} /></Routes> : <Layout><Routes>
           <Route path="/" element={<Dashboard />} />
