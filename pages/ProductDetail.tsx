@@ -3,7 +3,8 @@ import React, { useContext, useMemo, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { CRMContext, generateId } from '../App';
 import { Icons } from '../constants';
-import { Product, ProductActivity, ProductActivityType, ProductPrice, ProductSupplier, UserRole } from '../types';
+import { Brand, BrandSet, Product, ProductActivity, ProductActivityType, ProductPrice, ProductSupplier, UserRole } from '../types';
+import { buildProductTitle, disabledBrandNames, entryText, productBrandParts } from '../services/brands';
 import { db } from '../services/db';
 import { localToday, mainSupplier, activeSuppliers, orderedSuppliers, priceOn, priceRecordOn, sortPrices, supplierOf, hasSupplier } from '../services/pricing';
 import { productPermissions } from '../services/permissions';
@@ -212,6 +213,9 @@ const ProductDetail: React.FC = () => {
   // Last 10 deliveries, or all of them when extended history is shown
   const lastDeliveries = showAllDeliveries ? productDeliveries : productDeliveries.slice(0, 10);
   const sizeLabel = product.unitSize ? `${product.unitSize}${product.measuringUnit ? ` ${product.measuringUnit}` : ''}` : '';
+  // The parent brand's optional short label shows under the name; disabled brands get a note
+  const brandLabel = ctx.brands.find(b => b.id === product.brandParentId)?.label;
+  const disabledBrands = disabledBrandNames(product, ctx.brands, ctx.brandSets);
   const activityShown = showAllActivity ? product.activity : product.activity.slice(0, 10);
   const btn = "flex-1 md:flex-none px-4 md:px-5 py-2.5 md:py-3 bg-white border border-slate-200 rounded-xl font-semibold text-slate-600 hover:bg-slate-50 transition-all shadow-sm text-sm";
   const smallBtn = "text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-600 hover:border-indigo-300 hover:text-indigo-600";
@@ -226,6 +230,7 @@ const ProductDetail: React.FC = () => {
           <div className="min-w-0">
             <h1 className="text-lg md:text-2xl font-black text-slate-900 leading-tight tracking-tight break-words">{product.title}</h1>
             {sizeLabel && <p className="text-slate-600 text-xs md:text-sm font-bold mt-1">{sizeLabel}</p>}
+            {brandLabel && <p className="text-slate-500 text-xs md:text-sm font-bold mt-0.5">{brandLabel}</p>}
             <p className="text-slate-500 text-xs md:text-sm font-medium mt-1">Added: {product.dateAdded}</p>
           </div>
         </div>
@@ -252,6 +257,12 @@ const ProductDetail: React.FC = () => {
           )}
         </div>}
       </div>
+
+      {disabledBrands.length > 0 && !isSupplierRole && (
+        <div className="p-3 md:p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm font-bold">
+          Includes a disabled brand: {disabledBrands.join(', ')}. It can still be ordered after a warning, but no new product can use this brand.
+        </div>
+      )}
 
       {product.isArchived && (
         <div className="p-3 md:p-4 rounded-xl bg-slate-100 border border-slate-200 text-slate-700 text-sm font-bold">
@@ -522,6 +533,8 @@ const ProductDetail: React.FC = () => {
           categories={ctx.categories}
           measuringUnits={measuringUnits}
           products={products}
+          brands={ctx.brands}
+          brandSets={ctx.brandSets}
           onClose={() => setShowMetadataModal(false)}
           onSave={async (updates) => {
             const updated = { ...product, ...updates };
@@ -676,9 +689,13 @@ const MetadataModal: React.FC<{
   onClose: () => void;
   onSave: (updates: any) => void;
   requireChange?: boolean;
-}> = ({ product, categories, measuringUnits, products, onClose, onSave, requireChange = false }) => {
+  brands: Brand[];
+  brandSets: BrandSet[];
+}> = ({ product, categories, measuringUnits, products, onClose, onSave, requireChange = false, brands, brandSets }) => {
+  // A product's brand is locked after creation (agreed 12 Nov 2026): change it by duplicating
+  const brandParts = productBrandParts(product, brands, brandSets);
+  const [nameError, setNameError] = useState('');
   const [formData, setFormData] = useState({
-    brand: product.brand,
     category: product.category,
     itemName: product.itemName,
     description: product.description || '',
@@ -687,13 +704,12 @@ const MetadataModal: React.FC<{
     packing: product.packing,
   });
   const generatedTitle = useMemo(() => {
-    return [formData.category, formData.brand, formData.itemName, formData.packing].filter(Boolean).join(' ');
-  }, [formData]);
+    return buildProductTitle(formData.category, brandParts.parentName, brandParts.childNames, formData.itemName, formData.packing);
+  }, [formData, brandParts.parentName, brandParts.childNames.join(',')]);
 
   const isDirty = useMemo(() => {
     if (!requireChange) return true;
     const fieldChanged = (
-      formData.brand !== product.brand ||
       formData.category !== product.category ||
       formData.itemName !== product.itemName ||
       formData.description !== (product.description || '') ||
@@ -712,6 +728,10 @@ const MetadataModal: React.FC<{
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!isDirty) return;
+    setNameError('');
+    if (!(formData.itemName || '').trim()) { setNameError('Item name is required.'); return; }
+    const sameName = products.find((p: any) => p.id !== product.id && p.title.trim().toLowerCase() === generatedTitle.trim().toLowerCase());
+    if (sameName) { setNameError(`Another product already has this name: "${sameName.title}". Change the item name, e.g. add "Large".`); return; }
     // Linked products are managed on the product page, not here
     onSave({ ...formData, title: generatedTitle });
   };
@@ -737,8 +757,9 @@ const MetadataModal: React.FC<{
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-6">
             <div>
-              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Brand Name*</label>
-              <input name="brand" value={formData.brand} onChange={handleChange} type="text" className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm" required />
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Brand (locked)</label>
+              <div className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-100 font-bold text-sm text-slate-600">{entryText(brandParts.parentName, brandParts.childNames) || '--'}</div>
+              <p className="text-[11px] text-slate-400 mt-1">To use a different brand, duplicate the product.</p>
             </div>
             <div>
               <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Item Category*</label>
@@ -773,6 +794,8 @@ const MetadataModal: React.FC<{
               <input name="packing" value={formData.packing} onChange={handleChange} type="text" className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm" placeholder="Optional, e.g. Bundle of 20" />
             </div>
           </div>
+
+          {nameError && <div className="p-3 rounded-xl bg-red-50 text-red-700 text-sm font-bold">{nameError}</div>}
 
           <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 md:gap-4 pt-4 md:pt-6 border-t border-slate-100">
             <button type="button" onClick={onClose} className="px-6 md:px-8 py-3 md:py-4 rounded-xl md:rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors uppercase tracking-widest text-[10px]">Cancel</button>

@@ -5,6 +5,7 @@ import { DeliveryStatus, Order, UserRole } from '../types';
 import { Icons } from '../constants';
 import { db } from '../services/db';
 import { hasActiveSupplier, orderBelongsTo, priceFor, localToday } from '../services/pricing';
+import { disabledBrandNames } from '../services/brands';
 
 const Orders: React.FC = () => {
   const ctx = useContext(CRMContext);
@@ -17,7 +18,9 @@ const Orders: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
 
   // Create Order Form State
-  const [cart, setCart] = useState<{ productId: string, quantity: number, unitPrice: number }[]>([]);
+  const [cart, setCart] = useState<{ productId: string, quantity: number, unitPrice: number, includesDisabledBrand?: boolean }[]>([]);
+  // Names of the disabled brands on the product being added, while the warning is open
+  const [disabledBrandWarning, setDisabledBrandWarning] = useState<string[] | null>(null);
   const [tempProduct, setTempProduct] = useState('');
   const [tempQuantity, setTempQuantity] = useState<number>(0);
   // Typed price for a "price set on each order" product (e.g. custom stickers)
@@ -97,7 +100,14 @@ const Orders: React.FC = () => {
     (tempIsPerOrder && (isNaN(tempPriceValue) || tempPriceValue <= 0));
   const isSubmitDisabled = !selectedBuyerId || !selectedVendorId || cart.length === 0;
 
-  const addToCart = () => {
+  const clearLineInputs = () => {
+    setTempProduct('');
+    setTempQuantity(0);
+    setTempPrice('');
+  };
+
+  // confirmedDisabledBrand: the person chose "Add it anyway" for a product with a disabled brand
+  const addToCart = (confirmedDisabledBrand = false) => {
     if (isAddDisabled) return;
 
     // One item can only be added once in the order
@@ -109,16 +119,22 @@ const Orders: React.FC = () => {
     // The supplier's price that applies today is locked into the order
     const product = products.find(p => p.id === tempProduct);
     if (!product || product.isArchived) return;
+
+    // A product with a disabled brand can still be ordered, after a warning (agreed 12 Nov 2026)
+    const disabledNames = disabledBrandNames(product, ctx.brands, ctx.brandSets);
+    if (disabledNames.length > 0 && !confirmedDisabledBrand) {
+      setDisabledBrandWarning(disabledNames);
+      return;
+    }
+
     // "Price set on each order" products use the price typed for this line (only Super Admin
     // and Admin can create orders, so only they can type it)
     const unitPrice = product.priceMode === 'PER_ORDER'
       ? Math.round(tempPriceValue * 1000) / 1000
       : priceFor(product, selectedVendorId, localToday());
 
-    setCart(prev => [...prev, { productId: tempProduct, quantity: tempQuantity, unitPrice }]);
-    setTempProduct('');
-    setTempQuantity(0);
-    setTempPrice('');
+    setCart(prev => [...prev, { productId: tempProduct, quantity: tempQuantity, unitPrice, includesDisabledBrand: disabledNames.length > 0 || undefined }]);
+    clearLineInputs();
   };
 
   const removeFromCart = (index: number) => {
@@ -144,7 +160,8 @@ const Orders: React.FC = () => {
         productId: item.productId,
         quantity: item.quantity,
         unitPrice: item.unitPrice,
-        status: DeliveryStatus.PENDING
+        status: DeliveryStatus.PENDING,
+        ...(item.includesDisabledBrand ? { includesDisabledBrand: true } : {}),
       })),
       totalAmount: totalOrderValue
     };
@@ -334,6 +351,7 @@ const Orders: React.FC = () => {
                                         <div className="text-sm font-black text-slate-900">{prod?.title}</div>
                                         <div className="text-[10px] font-bold text-slate-500 mt-0.5">{prod?.unitSize || '--'}</div>
                                         <div className="text-[9px] font-black uppercase text-indigo-500 mt-1">{item.status}</div>
+                                        {item.includesDisabledBrand && <span className="inline-block mt-1 text-[9px] font-black px-2 py-0.5 rounded bg-amber-100 text-amber-700 uppercase">Includes disabled brand</span>}
                                       </div>
                                       <div className="text-right">
                                         <div className="text-[9px] font-black text-slate-400 uppercase">Planned</div>
@@ -417,6 +435,7 @@ const Orders: React.FC = () => {
                                         <td className="px-6 py-4">
                                           <div className="text-sm font-black text-slate-900">{prod?.title}</div>
                                           <div className="text-[9px] font-black uppercase text-indigo-500 mt-1">{item.status}</div>
+                                          {item.includesDisabledBrand && <span className="inline-block mt-1 text-[9px] font-black px-2 py-0.5 rounded bg-amber-100 text-amber-700 uppercase">Includes disabled brand</span>}
                                         </td>
                                         <td className="px-6 py-4">
                                           <div className="text-xs font-bold text-slate-600">{prod?.unitSize || '--'}</div>
@@ -589,7 +608,7 @@ const Orders: React.FC = () => {
                    )}
                    <button
                      type="button"
-                     onClick={addToCart}
+                     onClick={() => addToCart()}
                      disabled={isAddDisabled}
                      className={`md:col-span-3 py-4 rounded-2xl font-black uppercase tracking-widest text-xs flex items-center justify-center gap-2 transition-all active:scale-95 shadow-xl ${isAddDisabled ? 'bg-white/20 text-white/40 cursor-not-allowed' : 'bg-white text-indigo-600 hover:bg-indigo-50'}`}
                    >
@@ -610,6 +629,7 @@ const Orders: React.FC = () => {
                              <div className="font-black text-slate-900 text-sm truncate">{p?.title}</div>
                              {sizeOf(p) && <div className="text-[10px] text-slate-600 font-bold mt-0.5">{sizeOf(p)}</div>}
                              <div className="text-[9px] text-slate-400 font-bold uppercase mt-1">{p?.category}</div>
+                             {item.includesDisabledBrand && <span className="inline-block mt-1 text-[9px] font-black px-2 py-0.5 rounded bg-amber-100 text-amber-700 uppercase">Includes disabled brand</span>}
                           </div>
                           <div className="flex items-center gap-4 md:gap-6">
                              <div className="text-left sm:text-right">
@@ -653,6 +673,30 @@ const Orders: React.FC = () => {
                    </button>
                 </div>
              </div>
+          </div>
+        </div>
+      )}
+
+      {/* Warning before adding a product that has a disabled brand (agreed 12 Nov 2026) */}
+      {disabledBrandWarning && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl border border-slate-200 p-5 md:p-6 space-y-4">
+            <h3 className="text-lg font-black text-slate-900">This product includes a disabled brand</h3>
+            <p className="text-sm text-slate-600">Disabled: <span className="font-bold">{disabledBrandWarning.join(', ')}</span>. It can still be ordered. The order line will be tagged "Includes disabled brand".</p>
+            <div className="flex flex-col-reverse sm:flex-row justify-end gap-3">
+              <button
+                onClick={() => { setDisabledBrandWarning(null); clearLineInputs(); }}
+                className="px-6 py-3 rounded-xl font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 uppercase tracking-widest text-[10px]"
+              >
+                Don't add this item
+              </button>
+              <button
+                onClick={() => { setDisabledBrandWarning(null); addToCart(true); }}
+                className="px-6 py-3 rounded-xl font-black text-white bg-amber-600 hover:bg-amber-700 uppercase tracking-widest text-[10px]"
+              >
+                Add it anyway
+              </button>
+            </div>
           </div>
         </div>
       )}

@@ -1,9 +1,9 @@
 import { supabase } from './supabase';
 import {
   vendorToDb, productToDb, productSupplierToDb, productPriceToDb, productActivityToDb, orderToDb, deliveryToDb,
-  paymentToDb, userToDb, buyerToDb, categoryToDb, measuringUnitToDb
+  paymentToDb, userToDb, buyerToDb, categoryToDb, measuringUnitToDb, brandToDb, brandActivityToDb
 } from './mappers';
-import { Vendor, Product, ProductActivity, Order, Delivery, Payment, User, Buyer, Category, MeasuringUnit } from '../types';
+import { Vendor, Product, ProductActivity, Order, Delivery, Payment, User, Buyer, Category, MeasuringUnit, Brand, BrandSet, BrandActivity } from '../types';
 
 export const db = {
   // VENDORS
@@ -142,6 +142,37 @@ export const db = {
   },
 
   // CATEGORIES
+  // BRANDS (D37)
+  async upsertBrand(b: Brand) {
+    return supabase.from('brands').upsert(brandToDb(b));
+  },
+  async deleteBrand(id: string) {
+    return supabase.from('brands').delete().eq('id', id);
+  },
+  // A brand set is fixed once saved: created once with its members, never edited (only switched on/off)
+  async insertBrandSet(s: BrandSet) {
+    const res = await supabase.from('brand_sets').insert({ id: s.id, parent_id: s.parentId, is_active: s.isActive, created_by: s.createdBy || null });
+    if (res.error) return res;
+    return supabase.from('brand_set_members').insert(s.childIds.map(c => ({ set_id: s.id, child_id: c })));
+  },
+  async setBrandSetActive(id: string, isActive: boolean) {
+    return supabase.from('brand_sets').update({ is_active: isActive }).eq('id', id);
+  },
+  async deleteBrandSet(id: string) {
+    return supabase.from('brand_sets').delete().eq('id', id);
+  },
+  async insertBrandActivity(a: BrandActivity) {
+    return supabase.from('brand_activity').insert(brandActivityToDb(a));
+  },
+  // After a brand spelling fix: product names and the old typed brand are rebuilt
+  async updateProductNames(updates: { id: string; title: string; brand: string }[]) {
+    for (const u of updates) {
+      const r = await supabase.from('products').update({ title: u.title, brand: u.brand }).eq('id', u.id);
+      if (r.error) return r;
+    }
+    return { error: null };
+  },
+
   async upsertCategory(c: Category) {
     return supabase.from('categories').upsert(categoryToDb(c));
   },

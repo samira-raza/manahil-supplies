@@ -7,6 +7,10 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { db } from '../services/db';
 import { localToday, mainSupplier, activeSuppliers, orderedSuppliers, priceOn, sortPrices, hasSupplier, deliveryLine } from '../services/pricing';
 import { productPermissions } from '../services/permissions';
+import { brandEntries, entryKey, entryText, buildProductTitle, productBrandParts, setChildNames, parentBrands, childBrandsOf } from '../services/brands';
+
+// The brand picked on the form is one entry: "parentId" (parent alone) or "parentId|setId" (a brand set)
+const splitEntry = (key: string) => { const [parentId, setId] = key.split('|'); return { parentId: parentId || undefined, setId: setId || undefined }; };
 
 // One supplier on the Create Product form, with one or more dated prices
 type SupplierDraft = { vendorId: string; prices: { price: string; effectiveDate: string; note: string }[] };
@@ -55,16 +59,15 @@ const Products: React.FC = () => {
   const [perOrderMode, setPerOrderMode] = useState(false);
   const [pageNotice, setPageNotice] = useState('');
 
-  // Auto-generate display name
+  const [filterBrand, setFilterBrand] = useState(''); // 'p:<parentId>' or 'c:<childId>'
+
+  // Name = Category + Parent brand + [child brands A-Z] + Item name + Packing (agreed 12 Nov 2026)
   const generatedTitle = useMemo(() => {
-    const parts = [
-      formData.category,
-      formData.brand,
-      formData.itemName,
-      formData.packing
-    ].filter(Boolean);
-    return parts.join(' ');
-  }, [formData]);
+    const { parentId, setId } = splitEntry(formData.brand);
+    const parentName = ctx?.brands.find(b => b.id === parentId)?.name || '';
+    const childNames = setChildNames(ctx?.brandSets.find(s => s.id === setId), ctx?.brands || []);
+    return buildProductTitle(formData.category, parentName, childNames, formData.itemName, formData.packing);
+  }, [formData, ctx?.brands, ctx?.brandSets]);
 
   useEffect(() => {
     const categories = ctx?.categories || [];
@@ -83,7 +86,7 @@ const Products: React.FC = () => {
     if (!original || !productPermissions(ctx.currentUser).createProducts) return;
     const today = localToday();
     setFormData({
-      brand: original.brand,
+      brand: entryKey(original.brandParentId, original.brandSetId),
       category: original.category,
       itemName: original.itemName,
       description: withCopyTag(original.description),
@@ -126,13 +129,19 @@ const Products: React.FC = () => {
   const visibleSuppliers = (p: Product) =>
     isSupplierRole ? p.suppliers.filter(s => s.vendorId === mySupplierId) : orderedSuppliers(p);
 
+  const { brands, brandSets } = ctx;
   const filtered = baseProducts.filter(p => {
-    const matchesSearch = p.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      p.brand.toLowerCase().includes(searchTerm.toLowerCase());
+    const q = searchTerm.toLowerCase();
+    const label = brands.find(b => b.id === p.brandParentId)?.label || '';
+    const matchesSearch = p.title.toLowerCase().includes(q) || (p.brand || '').toLowerCase().includes(q) || label.toLowerCase().includes(q);
     const matchesCategory = !filterCategory || p.category === filterCategory;
     const matchesVendor = !filterVendor || hasSupplier(p, filterVendor);
     const matchesArchive = !filterArchive || (filterArchive === 'archived' ? !!p.isArchived : !p.isArchived);
-    return matchesSearch && matchesCategory && matchesVendor && matchesArchive;
+    // Brand filter: a parent brand (all its products) or any single child brand (products whose set includes it)
+    const matchesBrand = !filterBrand ||
+      (filterBrand.startsWith('p:') && p.brandParentId === filterBrand.slice(2)) ||
+      (filterBrand.startsWith('c:') && !!brandSets.find(s => s.id === p.brandSetId)?.childIds.includes(filterBrand.slice(2)));
+    return matchesSearch && matchesCategory && matchesVendor && matchesArchive && matchesBrand;
   });
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
@@ -169,8 +178,20 @@ const Products: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
-    if (!formData.itemName || !formData.brand) {
+    if (!formData.itemName.trim() || !formData.brand) {
       setFormError('Brand and Item Name are required.');
+      return;
+    }
+    // Only brands that are switched on can be used for a new product
+    const pickedEntry = brandEntries(brands, brandSets).find(e => e.key === formData.brand);
+    if (!pickedEntry || !pickedEntry.usable) {
+      setFormError('The chosen brand is disabled or no longer exists. Please pick another brand.');
+      return;
+    }
+    // No two products with the same name (agreed 1 Nov 2026)
+    const sameName = products.find(p => p.title.trim().toLowerCase() === generatedTitle.trim().toLowerCase());
+    if (sameName) {
+      setFormError(`Another product already has this name: "${sameName.title}". Change the item name, e.g. add "Large".`);
       return;
     }
     const drafts = supplierDrafts.filter(d => d.vendorId);
@@ -206,7 +227,7 @@ const Products: React.FC = () => {
         return s ? priceOn(s, today) : undefined;
       };
       const infoChanged =
-        formData.brand !== duplicateOf.brand ||
+        formData.brand !== entryKey(duplicateOf.brandParentId, duplicateOf.brandSetId) ||
         formData.category !== duplicateOf.category ||
         formData.itemName !== duplicateOf.itemName ||
         withoutCopyTag(formData.description) !== withoutCopyTag(duplicateOf.description) ||
@@ -252,10 +273,14 @@ const Products: React.FC = () => {
       })),
     }));
 
+    const picked = splitEntry(formData.brand);
     const newProduct: Product = {
       id: productId,
       title: generatedTitle,
-      brand: formData.brand,
+      // The old typed-brand column keeps the parent's name, so a rollback still shows a brand
+      brand: brands.find(b => b.id === picked.parentId)?.name || '',
+      brandParentId: picked.parentId,
+      brandSetId: picked.setId,
       category: formData.category,
       itemName: formData.itemName,
       description: formData.description,
@@ -423,6 +448,19 @@ const Products: React.FC = () => {
               ))}
             </select>}
             <select
+              value={filterBrand}
+              onChange={(e) => setFilterBrand(e.target.value)}
+              className="px-4 py-3 rounded-xl bg-white border border-slate-200 focus:ring-2 focus:ring-indigo-500 transition-all text-sm font-medium min-w-[140px]"
+            >
+              <option value="">All Brands</option>
+              {parentBrands(brands).map(parent => (
+                <React.Fragment key={parent.id}>
+                  <option value={`p:${parent.id}`}>{parent.name}</option>
+                  {childBrandsOf(parent.id, brands).map(c => <option key={c.id} value={`c:${c.id}`}>{'   '}{c.name}</option>)}
+                </React.Fragment>
+              ))}
+            </select>
+            <select
               value={filterArchive}
               onChange={(e) => setFilterArchive(e.target.value)}
               className="px-4 py-3 rounded-xl bg-white border border-slate-200 focus:ring-2 focus:ring-indigo-500 transition-all text-sm font-medium min-w-[140px]"
@@ -431,9 +469,9 @@ const Products: React.FC = () => {
               <option value="active">Active Only</option>
               <option value="archived">Archived Only</option>
             </select>
-            {(filterCategory || filterVendor || filterArchive || searchTerm) && (
+            {(filterCategory || filterVendor || filterArchive || filterBrand || searchTerm) && (
               <button
-                onClick={() => { setFilterCategory(''); setFilterVendor(''); setFilterArchive(''); setSearchTerm(''); }}
+                onClick={() => { setFilterCategory(''); setFilterVendor(''); setFilterArchive(''); setFilterBrand(''); setSearchTerm(''); }}
                 className="px-4 py-3 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-600 text-sm font-medium transition-all"
               >
                 Clear
@@ -471,7 +509,13 @@ const Products: React.FC = () => {
                           <div className="font-black text-slate-900 leading-tight text-sm md:text-base max-w-[200px] md:max-w-md group-hover:text-indigo-600 truncate md:whitespace-normal">{p.itemName || p.title}{p.packing ? ` - ${p.packing}` : ''}</div>
                         </Link>
                         <div className="flex items-center gap-1 md:gap-2 mt-1 md:mt-2 flex-wrap">
-                           <span className="text-[8px] md:text-[9px] font-black px-1.5 md:px-2 py-0.5 rounded bg-slate-900 text-white uppercase">{p.brand}</span>
+                           {(() => {
+                             const parts = productBrandParts(p, brands, brandSets);
+                             return <>
+                               <span className="text-[8px] md:text-[9px] font-black px-1.5 md:px-2 py-0.5 rounded bg-slate-900 text-white uppercase">{entryText(parts.parentName, parts.childNames)}</span>
+                               {parts.label && <span className="text-[8px] md:text-[9px] font-bold px-1.5 md:px-2 py-0.5 rounded bg-slate-100 text-slate-600">{parts.label}</span>}
+                             </>;
+                           })()}
                            <span className="text-[8px] md:text-[9px] font-black px-1.5 md:px-2 py-0.5 rounded bg-indigo-100 text-indigo-700 uppercase">{p.category}</span>
                            {p.isArchived && <span className="text-[8px] md:text-[9px] font-black px-1.5 md:px-2 py-0.5 rounded bg-slate-300 text-slate-700 uppercase">Archived</span>}
                         </div>
@@ -629,8 +673,14 @@ const Products: React.FC = () => {
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
-                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Brand Name*</label>
-                    <input name="brand" value={formData.brand} onChange={handleInputChange} type="text" className="w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm" placeholder="e.g. LogiPack" required />
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Brand*</label>
+                    <select name="brand" value={formData.brand} onChange={handleInputChange} className="w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm" required>
+                      <option value="">-- Choose brand or brand set --</option>
+                      {brandEntries(brands, brandSets).filter(e => e.usable || e.key === formData.brand).map(e => (
+                        <option key={e.key} value={e.key} disabled={!e.usable}>{e.setId ? `   ${e.text}` : e.text}{e.usable ? '' : ' (disabled)'}</option>
+                      ))}
+                    </select>
+                    <p className="text-[11px] text-slate-400 mt-1">Brands and brand sets are set up in the Brands section.</p>
                   </div>
                   <div>
                     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Item Category*</label>
