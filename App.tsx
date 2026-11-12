@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { HashRouter, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom';
-import { Category, ChallanStatus, DeliveryStatus, UserRole, Product, Vendor, Order, Delivery, User, Payment, Buyer, StagedDispatchItem, MeasuringUnit, Brand, BrandSet, BrandActivity } from './types';
+import { Category, ChallanStatus, DeliveryStatus, UserRole, Product, Vendor, Order, Delivery, User, Payment, Buyer, StagedDispatchItem, MeasuringUnit, Brand, BrandSet, BrandActivity, CategoryActivity } from './types';
 import { Icons } from './constants';
 import Dashboard from './pages/Dashboard';
 import Products from './pages/Products';
@@ -19,7 +19,7 @@ import { supabase } from './services/supabase';
 import {
   vendorFromDb, productFromDb, orderFromDb, deliveryFromDb,
   paymentFromDb, userFromDb, buyerFromDb, categoryFromDb, measuringUnitFromDb,
-  deliveryToDb, orderToDb, userToDb, brandFromDb, brandSetFromDb, brandActivityFromDb
+  deliveryToDb, orderToDb, userToDb, brandFromDb, brandSetFromDb, brandActivityFromDb, categoryActivityFromDb
 } from './services/mappers';
 
 export const generateId = () => Math.random().toString(36).substr(2, 9) + Date.now().toString(36);
@@ -40,6 +40,7 @@ const useCRMStore = () => {
   const [brands, setBrands] = useState<Brand[]>([]);
   const [brandSets, setBrandSets] = useState<BrandSet[]>([]);
   const [brandActivity, setBrandActivity] = useState<BrandActivity[]>([]);
+  const [categoryActivity, setCategoryActivity] = useState<CategoryActivity[]>([]);
   const [measuringUnits, setMeasuringUnits] = useState<MeasuringUnit[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
@@ -71,6 +72,7 @@ const useCRMStore = () => {
         { data: brandSetsData },
         { data: brandSetMembersData },
         { data: brandActivityData },
+        { data: categoryActivityData },
       ] = await Promise.all([
         supabase.from('users').select('*'),
         supabase.from('vendors').select('*'),
@@ -89,6 +91,7 @@ const useCRMStore = () => {
         supabase.from('brand_sets').select('*'),
         supabase.from('brand_set_members').select('*'),
         supabase.from('brand_activity').select('*').order('at', { ascending: false }),
+        supabase.from('category_activity').select('*').order('at', { ascending: false }),
       ]);
 
       setUsers((usersData || []).map(userFromDb));
@@ -99,6 +102,7 @@ const useCRMStore = () => {
       setBrands((brandsData || []).map(brandFromDb));
       setBrandSets((brandSetsData || []).map(row => brandSetFromDb(row, brandSetMembersData || [])));
       setBrandActivity((brandActivityData || []).map(brandActivityFromDb));
+      setCategoryActivity((categoryActivityData || []).map(categoryActivityFromDb));
       setMeasuringUnits((measuringUnitsData || []).map(measuringUnitFromDb));
       const parsedOrders = (ordersData || []).map(orderFromDb);
       const parsedDeliveries = (deliveriesData || []).map(deliveryFromDb);
@@ -261,6 +265,7 @@ const useCRMStore = () => {
   return {
     currentUser, setCurrentUser, products, setProducts, vendors: visibleVendors, setVendors, categories, setCategories,
     brands, setBrands, brandSets, setBrandSets, brandActivity, setBrandActivity,
+    categoryActivity, setCategoryActivity,
     measuringUnits, setMeasuringUnits,
     orders, setOrders, deliveries, setDeliveries, users, setUsers, payments, setPayments, buyers, setBuyers,
     dispatchBucket, setDispatchBucket, finalizeChallan, recalculateOrderStatuses, loading

@@ -1,9 +1,9 @@
 import { supabase } from './supabase';
 import {
   vendorToDb, productToDb, productSupplierToDb, productPriceToDb, productActivityToDb, orderToDb, deliveryToDb,
-  paymentToDb, userToDb, buyerToDb, categoryToDb, measuringUnitToDb, brandToDb, brandActivityToDb
+  paymentToDb, userToDb, buyerToDb, categoryToDb, categoryActivityToDb, measuringUnitToDb, brandToDb, brandActivityToDb
 } from './mappers';
-import { Vendor, Product, ProductActivity, Order, Delivery, Payment, User, Buyer, Category, MeasuringUnit, Brand, BrandSet, BrandActivity } from '../types';
+import { Vendor, Product, ProductActivity, Order, Delivery, Payment, User, Buyer, Category, CategoryActivity, MeasuringUnit, Brand, BrandSet, BrandActivity } from '../types';
 
 export const db = {
   // VENDORS
@@ -141,7 +141,6 @@ export const db = {
     return supabase.from('buyers').delete().eq('id', id);
   },
 
-  // CATEGORIES
   // BRANDS (D37)
   async upsertBrand(b: Brand) {
     return supabase.from('brands').upsert(brandToDb(b));
@@ -173,11 +172,24 @@ export const db = {
     return { error: null };
   },
 
+  // CATEGORIES (D38)
   async upsertCategory(c: Category) {
     return supabase.from('categories').upsert(categoryToDb(c));
   },
+  // The database refuses this while any product is linked to the category
   async deleteCategory(id: string) {
     return supabase.from('categories').delete().eq('id', id);
+  },
+  async insertCategoryActivity(a: CategoryActivity) {
+    return supabase.from('category_activity').insert(categoryActivityToDb(a));
+  },
+  // After the category's word in product names changes: each product's name and category word are rebuilt
+  async updateProductCategoryNames(updates: { id: string; title: string; category: string; categoryId: string }[]) {
+    for (const u of updates) {
+      const r = await supabase.from('products').update({ title: u.title, category: u.category, category_id: u.categoryId }).eq('id', u.id);
+      if (r.error) return r;
+    }
+    return { error: null };
   },
 
   // MEASURING UNITS
