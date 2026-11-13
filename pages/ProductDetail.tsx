@@ -6,6 +6,7 @@ import { Icons } from '../constants';
 import { Brand, BrandSet, Category, Product, ProductActivity, ProductActivityType, ProductPrice, ProductSupplier, UserRole } from '../types';
 import { buildProductTitle, disabledBrandNames, entryText, productBrandParts } from '../services/brands';
 import { db } from '../services/db';
+import { notSavedMessage, errorBoxCls } from '../services/errors';
 import { categoryOf, categoryFullName, categoryLabel, sortCategories } from '../services/categories';
 import { localToday, mainSupplier, activeSuppliers, orderedSuppliers, priceOn, priceRecordOn, sortPrices, supplierOf, hasSupplier } from '../services/pricing';
 import { productPermissions } from '../services/permissions';
@@ -63,6 +64,11 @@ const ProductDetail: React.FC = () => {
   // A product that appears on any order (or delivery) can never be deleted, only archived
   const everOrdered = orders.some(o => o.items.some(i => i.productId === product.id)) || productDeliveries.length > 0;
 
+  // While a dialog is open, a failed save shows inside that dialog instead of behind it (BUG-282).
+  // Closing a dialog with Cancel or X clears the message, so it doesn't reappear on the page.
+  const dialogOpen = showMetadataModal || !!priceDialog || !!supplierDialog || !!stopMainDialog || !!lifecycleDialog || !!deletePriceDialog;
+  const dismiss = (close: () => void) => () => { setActionError(''); close(); };
+
   // Records what happened in the product's activity log and updates the screen
   const logActivity = async (updated: Product, type: ProductActivityType, details: string) => {
     const entry: ProductActivity = {
@@ -89,7 +95,7 @@ const ProductDetail: React.FC = () => {
       ? await db.addProductLinks(product.id, [otherId], currentUser?.name)
       : await db.removeProductLink(product.id, otherId);
     if (res.error) {
-      setActionError(`The link was not ${add ? 'added' : 'removed'}: ${res.error.message}`);
+      setActionError(notSavedMessage(res.error, add ? 'The link' : 'Removing the link'));
       return;
     }
     const mine = add ? [...(product.relatedProductIds || []).filter(x => x !== otherId), otherId] : (product.relatedProductIds || []).filter(x => x !== otherId);
@@ -108,7 +114,7 @@ const ProductDetail: React.FC = () => {
     const { error } = await db.setProductArchived(product.id, archived, currentUser?.name);
     setLifecycleBusy(false);
     if (error) {
-      setActionError(`The product was not ${archived ? 'archived' : 'brought back'}: ${error.message}`);
+      setActionError(notSavedMessage(error, archived ? 'Archiving the product' : 'Bringing the product back'));
       return;
     }
     const updated: Product = archived
@@ -128,20 +134,20 @@ const ProductDetail: React.FC = () => {
     const record = await db.recordDeletedProduct({ id: generateId(), productId: product.id, title: product.title, snapshot: rest, deletedBy: currentUser?.name });
     if (record.error) {
       setLifecycleBusy(false);
-      setActionError(`The product was not deleted: ${record.error.message}`);
+      setActionError(notSavedMessage(record.error, 'Deleting the product'));
       return;
     }
     const linkedFrom = products.filter(p => p.id !== product.id && (p.relatedProductIds || []).includes(product.id));
     const unlink = await db.unlinkRelatedProduct(product.id, linkedFrom);
     if (unlink.error) {
       setLifecycleBusy(false);
-      setActionError(`The product was not deleted: ${unlink.error.message}`);
+      setActionError(notSavedMessage(unlink.error, 'Deleting the product'));
       return;
     }
     const { error } = await db.deleteProduct(product.id);
     setLifecycleBusy(false);
     if (error) {
-      setActionError(`The product was not deleted: ${error.message}`);
+      setActionError(notSavedMessage(error, 'Deleting the product'));
       return;
     }
     setProducts(prev => prev
@@ -160,7 +166,7 @@ const ProductDetail: React.FC = () => {
     setActionError('');
     const { error } = await db.saveProductWithSuppliers(updated);
     if (error) {
-      setActionError(`The change was not saved: ${error.message}`);
+      setActionError(notSavedMessage(error, 'The change'));
       return false;
     }
     await logActivity(updated, type, details);
@@ -272,7 +278,7 @@ const ProductDetail: React.FC = () => {
         </div>
       )}
 
-      {actionError && <div className="p-3 rounded-xl bg-red-50 text-red-700 text-sm font-bold">{actionError}</div>}
+      {actionError && !dialogOpen && <div className={errorBoxCls}>{actionError}</div>}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 md:gap-8">
 
@@ -537,12 +543,13 @@ const ProductDetail: React.FC = () => {
           products={products}
           brands={ctx.brands}
           brandSets={ctx.brandSets}
-          onClose={() => setShowMetadataModal(false)}
+          saveError={actionError}
+          onClose={dismiss(() => setShowMetadataModal(false))}
           onSave={async (updates) => {
             const updated = { ...product, ...updates };
             const { error } = await db.upsertProduct(updated);
             if (error) {
-              setActionError(`The changes were not saved: ${error.message}`);
+              setActionError(notSavedMessage(error, 'The changes'));
               return;
             }
             // A move to another category is recorded in the product's history (D38)
@@ -567,7 +574,8 @@ const ProductDetail: React.FC = () => {
           initialVendorId={priceDialog.vendorId || main?.vendorId}
           editing={priceDialog.edit}
           ordersAffected={(vendorId, fromDate) => orders.filter(o => o.vendorId === vendorId && o.date >= fromDate && o.items.some(i => i.productId === product.id)).length}
-          onClose={() => setPriceDialog(null)}
+          saveError={actionError}
+          onClose={dismiss(() => setPriceDialog(null))}
           onSave={async (vendorId, values) => {
             const sup = supplierOf(product, vendorId);
             if (!sup) return;
@@ -595,7 +603,8 @@ const ProductDetail: React.FC = () => {
           replacing={supplierDialog.replace ? vendorName(supplierDialog.replace.vendorId) : undefined}
           canSetMain={can.manageSuppliers && !supplierDialog.replace}
           noPrice={perOrder}
-          onClose={() => setSupplierDialog(null)}
+          saveError={actionError}
+          onClose={dismiss(() => setSupplierDialog(null))}
           onSave={async (vendorId, values, makeMain) => {
             const now = new Date().toISOString();
             const old = supplierDialog.replace;
@@ -628,7 +637,8 @@ const ProductDetail: React.FC = () => {
         <StopMainModal
           supplierName={vendorName(stopMainDialog.vendorId)}
           others={activeSuppliers(product).filter(s => s.id !== stopMainDialog.id).map(s => ({ id: s.id, name: vendorName(s.vendorId) }))}
-          onClose={() => setStopMainDialog(null)}
+          saveError={actionError}
+          onClose={dismiss(() => setStopMainDialog(null))}
           onConfirm={newMainId => stopSupplier(stopMainDialog, newMainId)}
         />
       )}
@@ -639,7 +649,8 @@ const ProductDetail: React.FC = () => {
           title="Archive this product?"
           message="It stays in the product list, greyed out, and its orders, deliveries, prices and history are kept. It can't be added to new orders. Orders already open finish normally. You can bring it back at any time."
           confirmLabel={lifecycleBusy ? 'Archiving...' : 'Archive'}
-          onClose={() => setLifecycleDialog(null)}
+          saveError={actionError}
+          onClose={dismiss(() => setLifecycleDialog(null))}
           onConfirm={() => { if (!lifecycleBusy) setArchived(true); }}
         />
       )}
@@ -648,7 +659,8 @@ const ProductDetail: React.FC = () => {
           title="Bring this product back?"
           message="It will be available for orders again."
           confirmLabel={lifecycleBusy ? 'Saving...' : 'Bring back'}
-          onClose={() => setLifecycleDialog(null)}
+          saveError={actionError}
+          onClose={dismiss(() => setLifecycleDialog(null))}
           onConfirm={() => { if (!lifecycleBusy) setArchived(false); }}
         />
       )}
@@ -659,7 +671,8 @@ const ProductDetail: React.FC = () => {
             ? 'This product has been ordered, so it cannot be deleted. Archive it instead.'
             : `"${product.title}" has never been ordered. It will be removed completely, with its suppliers, prices and activity. This cannot be undone.`}
           confirmLabel={everOrdered ? undefined : (lifecycleBusy ? 'Deleting...' : 'Delete product')}
-          onClose={() => setLifecycleDialog(null)}
+          saveError={actionError}
+          onClose={dismiss(() => setLifecycleDialog(null))}
           onConfirm={() => { if (!lifecycleBusy) deleteProduct(); }}
         />
       )}
@@ -672,12 +685,13 @@ const ProductDetail: React.FC = () => {
             ? 'This is the only price for this supplier, so it cannot be deleted. Correct it instead.'
             : `PKR ${deletePriceDialog.price.price.toFixed(2)} from ${deletePriceDialog.price.effectiveDate} for ${vendorName(deletePriceDialog.supplier.vendorId)} will be removed. Orders already placed keep their price.`}
           confirmLabel={deletePriceDialog.supplier.prices.length <= 1 ? undefined : 'Delete price'}
-          onClose={() => setDeletePriceDialog(null)}
+          saveError={actionError}
+          onClose={dismiss(() => setDeletePriceDialog(null))}
           onConfirm={async () => {
             const { supplier, price } = deletePriceDialog;
             const { error } = await db.deleteProductPrice(price.id);
             if (error) {
-              setActionError(`The price was not deleted: ${error.message}`);
+              setActionError(notSavedMessage(error, 'Deleting the price'));
               return;
             }
             const updated = withSupplier(supplier.id, s => ({ ...s, prices: s.prices.filter(pr => pr.id !== price.id) }));
@@ -701,7 +715,8 @@ const MetadataModal: React.FC<{
   requireChange?: boolean;
   brands: Brand[];
   brandSets: BrandSet[];
-}> = ({ product, categories, measuringUnits, products, onClose, onSave, requireChange = false, brands, brandSets }) => {
+  saveError?: string;
+}> = ({ product, categories, measuringUnits, products, onClose, onSave, requireChange = false, brands, brandSets, saveError }) => {
   // A product's brand is locked after creation (agreed 12 Nov 2026): change it by duplicating
   const brandParts = productBrandParts(product, brands, brandSets);
   const [nameError, setNameError] = useState('');
@@ -811,6 +826,7 @@ const MetadataModal: React.FC<{
           </div>
 
           {nameError && <div className="p-3 rounded-xl bg-red-50 text-red-700 text-sm font-bold">{nameError}</div>}
+          {saveError && <div className={errorBoxCls} role="alert">{saveError}</div>}
 
           <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 md:gap-4 pt-4 md:pt-6 border-t border-slate-100">
             <button type="button" onClick={onClose} className="px-6 md:px-8 py-3 md:py-4 rounded-xl md:rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors uppercase tracking-widest text-[10px]">Cancel</button>
@@ -883,7 +899,8 @@ const PriceModal: React.FC<{
   ordersAffected: (vendorId: string, fromDate: string) => number;
   onClose: () => void;
   onSave: (vendorId: string, values: PriceValues) => Promise<void>;
-}> = ({ suppliers, vendorName, initialVendorId, editing, ordersAffected, onClose, onSave }) => {
+  saveError?: string;
+}> = ({ suppliers, vendorName, initialVendorId, editing, ordersAffected, onClose, onSave, saveError }) => {
   const [vendorId, setVendorId] = useState(initialVendorId && suppliers.some(s => s.vendorId === initialVendorId) ? initialVendorId : suppliers[0]?.vendorId || '');
   const [price, setPrice] = useState(editing ? String(editing.price) : '');
   const [date, setDate] = useState(editing ? editing.effectiveDate : localToday());
@@ -919,6 +936,7 @@ const PriceModal: React.FC<{
           <p>This price starts on {confirmPast.values.effectiveDate}, which is in the past.</p>
           <p>Orders already placed keep the price they were placed at. <b>{confirmPast.count} order{confirmPast.count === 1 ? '' : 's'}</b> with {vendorName(vendorId)} for this product since that date will not change.</p>
         </div>
+        {saveError && <div className={errorBoxCls} role="alert">{saveError}</div>}
         <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 pt-2">
           <button type="button" onClick={() => setConfirmPast(null)} className={cancelCls}>Go back</button>
           <button type="button" disabled={saving} onClick={() => save(confirmPast.values)} className={saveCls}>{saving ? 'Saving...' : 'Save price'}</button>
@@ -944,6 +962,7 @@ const PriceModal: React.FC<{
         )}
         <PriceFields price={price} date={date} note={note} setPrice={setPrice} setDate={setDate} setNote={setNote} />
         {error && <div className="p-3 rounded-xl bg-red-50 text-red-700 text-sm font-bold">{error}</div>}
+        {saveError && <div className={errorBoxCls} role="alert">{saveError}</div>}
         <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 md:gap-4 pt-4 border-t border-slate-100">
           <button type="button" onClick={onClose} className={cancelCls}>Cancel</button>
           <button type="submit" disabled={saving} className={saveCls}>{saving ? 'Saving...' : editing ? 'Save correction' : 'Add price'}</button>
@@ -961,7 +980,8 @@ const SupplierModal: React.FC<{
   noPrice?: boolean; // "price set on each order" products: no price is asked
   onClose: () => void;
   onSave: (vendorId: string, values: PriceValues | null, makeMain: boolean) => Promise<void>;
-}> = ({ vendors, replacing, canSetMain, noPrice = false, onClose, onSave }) => {
+  saveError?: string;
+}> = ({ vendors, replacing, canSetMain, noPrice = false, onClose, onSave, saveError }) => {
   const [vendorId, setVendorId] = useState('');
   const [price, setPrice] = useState('');
   const [date, setDate] = useState(localToday());
@@ -1000,6 +1020,7 @@ const SupplierModal: React.FC<{
             </label>
           )}
           {error && <div className="p-3 rounded-xl bg-red-50 text-red-700 text-sm font-bold">{error}</div>}
+          {saveError && <div className={errorBoxCls} role="alert">{saveError}</div>}
           <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 md:gap-4 pt-4 border-t border-slate-100">
             <button type="button" onClick={onClose} className={cancelCls}>Cancel</button>
             <button type="submit" disabled={saving} className={saveCls}>{saving ? 'Saving...' : replacing ? 'Replace' : 'Add supplier'}</button>
@@ -1016,7 +1037,8 @@ const StopMainModal: React.FC<{
   others: { id: string; name: string }[];
   onClose: () => void;
   onConfirm: (newMainId: string | null) => void;
-}> = ({ supplierName, others, onClose, onConfirm }) => {
+  saveError?: string;
+}> = ({ supplierName, others, onClose, onConfirm, saveError }) => {
   const [choice, setChoice] = useState('');
   return (
     <ModalShell title="Stop the main supplier" onClose={onClose}>
@@ -1025,6 +1047,7 @@ const StopMainModal: React.FC<{
         <option value="">No main supplier</option>
         {others.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
       </select>
+      {saveError && <div className={errorBoxCls} role="alert">{saveError}</div>}
       <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 pt-2">
         <button type="button" onClick={onClose} className={cancelCls}>Cancel</button>
         <button type="button" onClick={() => onConfirm(choice || null)} className={saveCls}>Stop supplier</button>
@@ -1033,10 +1056,11 @@ const StopMainModal: React.FC<{
   );
 };
 
-const ConfirmModal: React.FC<{ title: string; message: string; confirmLabel?: string; onClose: () => void; onConfirm: () => void }> =
-  ({ title, message, confirmLabel, onClose, onConfirm }) => (
+const ConfirmModal: React.FC<{ title: string; message: string; confirmLabel?: string; onClose: () => void; onConfirm: () => void; saveError?: string }> =
+  ({ title, message, confirmLabel, onClose, onConfirm, saveError }) => (
   <ModalShell title={title} onClose={onClose}>
     <p className="text-sm text-slate-600">{message}</p>
+    {saveError && <div className={errorBoxCls} role="alert">{saveError}</div>}
     <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 pt-2">
       <button type="button" onClick={onClose} className={cancelCls}>{confirmLabel ? 'Cancel' : 'Close'}</button>
       {confirmLabel && <button type="button" onClick={onConfirm} className="px-8 py-3 md:py-4 rounded-xl md:rounded-2xl font-black text-white bg-red-600 hover:bg-red-700 uppercase tracking-widest text-[10px]">{confirmLabel}</button>}
