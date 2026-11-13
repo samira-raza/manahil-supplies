@@ -156,7 +156,7 @@ const Categories: React.FC = () => {
         if (e) {
           return e.code === '23503'
             ? `${categoryFullName(c)} was not deleted: products still use it. Move them to another category first.`
-            : `${categoryFullName(c)} was not deleted. Check your internet connection and try again. (Details: ${e.message})`;
+            : notSavedMessage(e, categoryFullName(c), 'deleted');
         }
         setCategories(prev => prev.filter(x => x.id !== c.id));
         await log({ categoryId: c.id, type: 'DELETED', details: `${categoryFullName(c)} deleted (word ${c.name}, short code ${c.shortCode || '(none)'})` });

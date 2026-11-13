@@ -95,7 +95,7 @@ const ProductDetail: React.FC = () => {
       ? await db.addProductLinks(product.id, [otherId], currentUser?.name)
       : await db.removeProductLink(product.id, otherId);
     if (res.error) {
-      setActionError(notSavedMessage(res.error, add ? 'The link' : 'Removing the link'));
+      setActionError(notSavedMessage(res.error, 'The link', add ? 'added' : 'removed'));
       return;
     }
     const mine = add ? [...(product.relatedProductIds || []).filter(x => x !== otherId), otherId] : (product.relatedProductIds || []).filter(x => x !== otherId);
@@ -114,7 +114,7 @@ const ProductDetail: React.FC = () => {
     const { error } = await db.setProductArchived(product.id, archived, currentUser?.name);
     setLifecycleBusy(false);
     if (error) {
-      setActionError(notSavedMessage(error, archived ? 'Archiving the product' : 'Bringing the product back'));
+      setActionError(notSavedMessage(error, 'The product', archived ? 'archived' : 'brought back'));
       return;
     }
     const updated: Product = archived
@@ -134,20 +134,20 @@ const ProductDetail: React.FC = () => {
     const record = await db.recordDeletedProduct({ id: generateId(), productId: product.id, title: product.title, snapshot: rest, deletedBy: currentUser?.name });
     if (record.error) {
       setLifecycleBusy(false);
-      setActionError(notSavedMessage(record.error, 'Deleting the product'));
+      setActionError(notSavedMessage(record.error, 'The product', 'deleted'));
       return;
     }
     const linkedFrom = products.filter(p => p.id !== product.id && (p.relatedProductIds || []).includes(product.id));
     const unlink = await db.unlinkRelatedProduct(product.id, linkedFrom);
     if (unlink.error) {
       setLifecycleBusy(false);
-      setActionError(notSavedMessage(unlink.error, 'Deleting the product'));
+      setActionError(notSavedMessage(unlink.error, 'The product', 'deleted'));
       return;
     }
     const { error } = await db.deleteProduct(product.id);
     setLifecycleBusy(false);
     if (error) {
-      setActionError(notSavedMessage(error, 'Deleting the product'));
+      setActionError(notSavedMessage(error, 'The product', 'deleted'));
       return;
     }
     setProducts(prev => prev
@@ -549,7 +549,7 @@ const ProductDetail: React.FC = () => {
             const updated = { ...product, ...updates };
             const { error } = await db.upsertProduct(updated);
             if (error) {
-              setActionError(notSavedMessage(error, 'The changes'));
+              setActionError(notSavedMessage(error, 'The change'));
               return;
             }
             // A move to another category is recorded in the product's history (D38)
@@ -691,7 +691,7 @@ const ProductDetail: React.FC = () => {
             const { supplier, price } = deletePriceDialog;
             const { error } = await db.deleteProductPrice(price.id);
             if (error) {
-              setActionError(notSavedMessage(error, 'Deleting the price'));
+              setActionError(notSavedMessage(error, 'The price', 'deleted'));
               return;
             }
             const updated = withSupplier(supplier.id, s => ({ ...s, prices: s.prices.filter(pr => pr.id !== price.id) }));

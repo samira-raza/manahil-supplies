@@ -69,7 +69,7 @@ const Brands: React.FC = () => {
   const saveBrand = async (b: Brand) => {
     setError('');
     const { error: e } = await db.upsertBrand(b);
-    if (e) return notSavedMessage(e, 'The change');
+    if (e) return notSavedMessage(e, 'The brand');
     setBrands(prev => prev.some(x => x.id === b.id) ? prev.map(x => x.id === b.id ? b : x) : [...prev, b]);
     return '';
   };
@@ -112,12 +112,12 @@ const Brands: React.FC = () => {
         setError('');
         if (target.brand) {
           const { error: e } = await db.deleteBrand(target.brand.id);
-          if (e) return `${target.brand.name} was not deleted. Check your internet connection and try again. (Details: ${e.message})`;
+          if (e) return notSavedMessage(e, target.brand.name, 'deleted');
           setBrands(prev => prev.filter(b => b.id !== target.brand!.id));
           await log({ brandId: target.brand.parentId || target.brand.id, type: 'DELETED', details: `${target.brand.name} deleted` });
         } else if (target.set) {
           const { error: e } = await db.deleteBrandSet(target.set.id);
-          if (e) return `The brand set was not deleted. Check your internet connection and try again. (Details: ${e.message})`;
+          if (e) return notSavedMessage(e, 'The brand set', 'deleted');
           setBrandSets(prev => prev.filter(s => s.id !== target.set!.id));
           await log({ brandId: target.set.parentId, type: 'DELETED', details: `Brand set ${setText(target.set, brands)} deleted` });
         }
