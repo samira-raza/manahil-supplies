@@ -5,6 +5,7 @@ import { Category, CategoryActivity } from '../types';
 import { Icons } from '../constants';
 import { db } from '../services/db';
 import { productTitleFor } from '../services/brands';
+import { notSavedMessage, errorBoxCls } from '../services/errors';
 import {
   categoryFullName, sortCategories, productsInCategory, suggestShortCode, defaultShortCode, validShortCode, categoryPermissions,
 } from '../services/categories';
@@ -21,7 +22,8 @@ type FormValues = { fullName: string; word: string; shortCode: string; descripti
 
 type Dialog =
   | { kind: 'form'; category?: Category }
-  | { kind: 'confirm'; title: string; message: React.ReactNode; label: string; run: () => Promise<boolean> }
+  // run returns '' when it worked, or the message to show inside the dialog (BUG-280)
+  | { kind: 'confirm'; title: string; message: React.ReactNode; label: string; run: () => Promise<string> }
   | { kind: 'info'; title: string; message: string };
 
 const Categories: React.FC = () => {
@@ -41,15 +43,17 @@ const Categories: React.FC = () => {
     if (!e) setCategoryActivity(prev => [a, ...prev]);
   };
 
+  // Each save returns '' when it worked, or the message to show inside the open dialog (BUG-280)
   const saveCategory = async (c: Category) => {
     setError('');
     const { error: e } = await db.upsertCategory(c);
     if (e) {
-      setError(e.code === '23505' ? 'Not saved: another category already uses this full name, word or short code.' : `Not saved: ${e.message}`);
-      return false;
+      return e.code === '23505'
+        ? 'The category was not saved: another category already uses this full name, word or short code.'
+        : notSavedMessage(e, 'The category');
     }
     setCategories(prev => prev.some(x => x.id === c.id) ? prev.map(x => x.id === c.id ? c : x) : [...prev, c]);
-    return true;
+    return '';
   };
 
   // When the word in product names changes, every product in the category gets its name rebuilt
@@ -73,14 +77,16 @@ const Categories: React.FC = () => {
       id: generateId(), name: v.word, fullName: v.fullName, shortCode: v.shortCode, description: v.description,
       createdBy: currentUser?.name,
     };
-    if (!(await saveCategory(c))) return false;
+    const failed = await saveCategory(c);
+    if (failed) return failed;
     await log({ categoryId: c.id, type: 'CREATED', details: `${c.fullName} added (word in product names: ${c.name}, short code: ${c.shortCode})` });
-    return true;
+    return '';
   };
 
   const updateCategory = async (old: Category, v: FormValues) => {
     const next: Category = { ...old, name: v.word, fullName: v.fullName, shortCode: v.shortCode, description: v.description };
-    if (!(await saveCategory(next))) return false;
+    const failed = await saveCategory(next);
+    if (failed) return failed;
     const oldFull = categoryFullName(old);
     if (oldFull !== v.fullName) {
       await log({ categoryId: old.id, type: 'FULL_NAME_CHANGED', details: `Full name changed from ${oldFull} to ${v.fullName}` });
@@ -97,14 +103,16 @@ const Categories: React.FC = () => {
           (count > 0 ? `, ${count} product${count === 1 ? '' : 's'} renamed${ok ? '' : ' (some failed, see the message on screen)'}` : ''),
       });
     }
-    return true;
+    // The category itself was saved, so the dialog closes; a product-rename failure shows on the page
+    return '';
   };
 
   // Saving an edit: if the word in product names changes and products use the category, show the preview first
   const onSaveForm = async (v: FormValues, old?: Category) => {
-    if (!old) { if (await addCategory(v)) setDialog(null); return; }
+    const done = (failed: string) => { if (!failed) setDialog(null); return failed; };
+    if (!old) return done(await addCategory(v));
     const renames = old.name !== v.word ? renamedProducts(old, v.word) : [];
-    if (renames.length === 0) { if (await updateCategory(old, v)) setDialog(null); return; }
+    if (renames.length === 0) return done(await updateCategory(old, v));
     const n = renames.length;
     setDialog({
       kind: 'confirm',
@@ -123,6 +131,7 @@ const Categories: React.FC = () => {
       ),
       run: () => updateCategory(old, v),
     });
+    return '';
   };
 
   const askDelete = (c: Category) => {
@@ -145,14 +154,13 @@ const Categories: React.FC = () => {
         setError('');
         const { error: e } = await db.deleteCategory(c.id);
         if (e) {
-          setError(e.code === '23503'
+          return e.code === '23503'
             ? `${categoryFullName(c)} was not deleted: products still use it. Move them to another category first.`
-            : `Not deleted: ${e.message}`);
-          return true;
+            : `${categoryFullName(c)} was not deleted. Check your internet connection and try again. (Details: ${e.message})`;
         }
         setCategories(prev => prev.filter(x => x.id !== c.id));
         await log({ categoryId: c.id, type: 'DELETED', details: `${categoryFullName(c)} deleted (word ${c.name}, short code ${c.shortCode || '(none)'})` });
-        return true;
+        return '';
       },
     });
   };
@@ -177,7 +185,7 @@ const Categories: React.FC = () => {
         )}
       </div>
 
-      {error && <div className="p-3 rounded-xl bg-red-50 text-red-700 text-sm font-bold">{error}</div>}
+      {error && <div className={errorBoxCls}>{error}</div>}
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-6">
         {sorted.map(cat => {
@@ -247,10 +255,8 @@ const Categories: React.FC = () => {
       )}
 
       {dialog?.kind === 'confirm' && (
-        <Modal title={dialog.title} onClose={() => setDialog(null)}>
-          <div className="text-sm text-slate-600">{dialog.message}</div>
-          <ConfirmButtons label={dialog.label} onCancel={() => setDialog(null)} onConfirm={async () => { if (await dialog.run()) setDialog(null); }} />
-        </Modal>
+        <ConfirmDialog key={dialog.title} title={dialog.title} message={dialog.message} label={dialog.label}
+          onClose={() => setDialog(null)} run={dialog.run} />
       )}
 
       {dialog?.kind === 'info' && (
@@ -292,13 +298,30 @@ const ConfirmButtons: React.FC<{ label: string; onCancel: () => void; onConfirm:
   );
 };
 
+// A confirmation box that keeps itself open and shows the reason when the action fails (BUG-280)
+const ConfirmDialog: React.FC<{ title: string; message: React.ReactNode; label: string; onClose: () => void; run: () => Promise<string> }> =
+  ({ title, message, label, onClose, run }) => {
+  const [error, setError] = useState('');
+  return (
+    <Modal title={title} onClose={onClose}>
+      <div className="text-sm text-slate-600">{message}</div>
+      {error && <div className={errorBoxCls} role="alert">{error}</div>}
+      <ConfirmButtons label={label} onCancel={onClose} onConfirm={async () => {
+        setError('');
+        const failed = await run();
+        if (failed) setError(failed); else onClose();
+      }} />
+    </Modal>
+  );
+};
+
 const CategoryDialog: React.FC<{
   category?: Category;
   others: Category[];
   productCount: number;
   can: ReturnType<typeof categoryPermissions>;
   onClose: () => void;
-  onSave: (v: FormValues) => Promise<void>;
+  onSave: (v: FormValues) => Promise<string>;
 }> = ({ category, others, productCount, can, onClose, onSave }) => {
   const isNew = !category;
   const [fullName, setFullName] = useState(category ? categoryFullName(category) : '');
@@ -334,7 +357,8 @@ const CategoryDialog: React.FC<{
       if (!validShortCode(shortCode)) return setError('The short code must be 2 or 3 capital letters.');
       if (codeHolder) return setError(`Short code ${shortCode} is already used by ${categoryFullName(codeHolder)}.`);
     }
-    await onSave({ fullName: f, word: w, shortCode, description: description.trim() });
+    const failed = await onSave({ fullName: f, word: w, shortCode, description: description.trim() });
+    if (failed) setError(failed);
   };
 
   const usual = defaultShortCode(fullName);
@@ -373,7 +397,7 @@ const CategoryDialog: React.FC<{
         <label className={labelCls}>Description (optional)</label>
         <textarea className={`${inputCls} h-20 resize-none`} value={description} onChange={e => setDescription(e.target.value)} placeholder="What items fall under this category" />
       </div>
-      {error && <div className="p-3 rounded-xl bg-red-50 text-red-700 text-sm font-bold">{error}</div>}
+      {error && <div className={errorBoxCls} role="alert">{error}</div>}
       <ConfirmButtons label={isNew ? 'Add category' : 'Save changes'} onCancel={onClose} onConfirm={save} />
     </Modal>
   );
