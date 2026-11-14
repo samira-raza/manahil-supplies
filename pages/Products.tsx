@@ -9,6 +9,8 @@ import { localToday, mainSupplier, activeSuppliers, orderedSuppliers, priceOn, s
 import { productPermissions } from '../services/permissions';
 import { brandEntries, entryKey, entryText, buildProductTitle, productBrandParts, setChildNames, parentBrands, childBrandsOf } from '../services/brands';
 import { sortCategories, categoryLabel } from '../services/categories';
+import { useFieldErrors, FieldErrors } from '../services/formErrors';
+import FieldMessage from '../components/FieldMessage';
 
 // The brand picked on the form is one entry: "parentId" (parent alone) or "parentId|setId" (a brand set)
 const splitEntry = (key: string) => { const [parentId, setId] = key.split('|'); return { parentId: parentId || undefined, setId: setId || undefined }; };
@@ -49,6 +51,7 @@ const Products: React.FC = () => {
   const [supplierDrafts, setSupplierDrafts] = useState<SupplierDraft[]>([emptySupplierDraft()]);
   const [mainVendorId, setMainVendorId] = useState('');
   const [formError, setFormError] = useState('');
+  const fe = useFieldErrors();
   const [saving, setSaving] = useState(false);
 
   // Duplicate mode: the form is filled in from an existing product
@@ -110,6 +113,7 @@ const Products: React.FC = () => {
     setWhatsDifferent('');
     setPriceWarning('');
     setFormError('');
+    fe.reset();
     setDuplicateOf(original);
     setShowAddModal(true);
   }, [location.state, ctx?.products]);
@@ -169,6 +173,7 @@ const Products: React.FC = () => {
     setSupplierDrafts([emptySupplierDraft()]);
     setMainVendorId('');
     setFormError('');
+    fe.reset();
     setDuplicateOf(null);
     setCopyLinks([]);
     setWhatsDifferent('');
@@ -179,39 +184,43 @@ const Products: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
-    if (!formData.itemName.trim() || !formData.brand) {
-      setFormError('Brand and Item Name are required.');
-      return;
+    // D39: check every field, outline each one that blocks saving, and move the cursor to the first
+    const errs: FieldErrors = {};
+    if (!formData.brand) {
+      errs.brand = 'Choose a brand or brand set.';
+    } else {
+      // Only brands that are switched on can be used for a new product
+      const pickedEntry = brandEntries(brands, brandSets).find(e => e.key === formData.brand);
+      if (!pickedEntry || !pickedEntry.usable) errs.brand = 'This brand is disabled or no longer exists. Pick another one.';
     }
-    // Only brands that are switched on can be used for a new product
-    const pickedEntry = brandEntries(brands, brandSets).find(e => e.key === formData.brand);
-    if (!pickedEntry || !pickedEntry.usable) {
-      setFormError('The chosen brand is disabled or no longer exists. Please pick another brand.');
-      return;
+    if (!formData.itemName.trim()) {
+      errs.itemName = 'Enter the item name.';
+    } else {
+      // No two products with the same name (agreed 1 Nov 2026)
+      const sameName = products.find(p => p.title.trim().toLowerCase() === generatedTitle.trim().toLowerCase());
+      if (sameName) errs.itemName = `Another product already has this name: "${sameName.title}". Change the item name, e.g. add "Large".`;
     }
-    // No two products with the same name (agreed 1 Nov 2026)
-    const sameName = products.find(p => p.title.trim().toLowerCase() === generatedTitle.trim().toLowerCase());
-    if (sameName) {
-      setFormError(`Another product already has this name: "${sameName.title}". Change the item name, e.g. add "Large".`);
-      return;
-    }
+    if (!formData.unitSize.trim()) errs.unitSize = 'Enter the unit size.';
+    if (duplicateOf && !whatsDifferent.trim()) errs.whatsDifferent = "Write what's different from the original.";
     const drafts = supplierDrafts.filter(d => d.vendorId);
     if (drafts.length === 0) {
-      setFormError(perOrderMode ? 'Add at least one supplier.' : 'Add at least one supplier with a price.');
-      return;
+      errs['supplier-0'] = perOrderMode ? 'Choose at least one supplier.' : 'Choose at least one supplier and give it a price.';
     }
     // "Price set on each order" products have no prices to check
-    for (const d of perOrderMode ? [] : drafts) {
-      const vendorName = vendors.find(v => v.id === d.vendorId)?.name || 'supplier';
-      const rows = d.prices.filter(r => r.price !== '');
-      if (rows.length === 0) {
-        setFormError(`Add a price for ${vendorName}.`);
-        return;
-      }
-      if (rows.some(r => isNaN(parseFloat(r.price)) || parseFloat(r.price) < 0 || !r.effectiveDate)) {
-        setFormError(`Check the prices and dates for ${vendorName}.`);
-        return;
-      }
+    if (!perOrderMode) {
+      supplierDrafts.forEach((d, idx) => {
+        if (!d.vendorId) return;
+        if (!d.prices.some(r => r.price !== '')) errs[`price-${idx}-0`] = 'Enter a price for this supplier.';
+        d.prices.forEach((r, pIdx) => {
+          if (r.price === '') return;
+          if (isNaN(parseFloat(r.price)) || parseFloat(r.price) < 0) errs[`price-${idx}-${pIdx}`] = 'Enter a price of 0 or more.';
+          if (!r.effectiveDate) errs[`date-${idx}-${pIdx}`] = 'Choose the start date.';
+        });
+      });
+    }
+    if (fe.show(errs)) {
+      setFormError('Not saved yet: please fix the fields outlined in red.');
+      return;
     }
 
     const today = localToday();
@@ -219,10 +228,6 @@ const Products: React.FC = () => {
 
     // Extra rules for a copy (agreed 1 Nov 2026)
     if (duplicateOf) {
-      if (!whatsDifferent.trim()) {
-        setFormError("Please fill in \"What's different from the original?\".");
-        return;
-      }
       const originalPrice = (vendorId: string) => {
         const s = activeSuppliers(duplicateOf).find(x => x.vendorId === vendorId);
         return s ? priceOn(s, today) : undefined;
@@ -651,7 +656,7 @@ const Products: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="p-4 md:p-10 overflow-y-auto space-y-6 md:space-y-10 flex-1">
+            <form onSubmit={handleSubmit} noValidate className="p-4 md:p-10 overflow-y-auto space-y-6 md:space-y-10 flex-1">
               
               <div className="space-y-4 md:space-y-6">
                 <div className="bg-indigo-600 p-4 md:p-8 rounded-2xl md:rounded-[32px] text-white shadow-xl shadow-indigo-100">
@@ -668,7 +673,8 @@ const Products: React.FC = () => {
                     </div>
                     <div>
                       <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">What's different from the original?*</label>
-                      <textarea value={whatsDifferent} onChange={e => setWhatsDifferent(e.target.value)} rows={2} className="w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm" placeholder="e.g. Same carton in 50x30x30" />
+                      <textarea value={whatsDifferent} onChange={e => setWhatsDifferent(e.target.value)} rows={2} {...fe.field('whatsDifferent', "w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm")} placeholder="e.g. Same carton in 50x30x30" />
+                      <FieldMessage msg={fe.errors.whatsDifferent} />
                     </div>
                   </div>
                 )}
@@ -676,12 +682,13 @@ const Products: React.FC = () => {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   <div>
                     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Brand*</label>
-                    <select name="brand" value={formData.brand} onChange={handleInputChange} className="w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm" required>
+                    <select name="brand" value={formData.brand} onChange={handleInputChange} {...fe.field('brand', "w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm")}>
                       <option value="">-- Choose brand or brand set --</option>
                       {brandEntries(brands, brandSets).filter(e => e.usable || e.key === formData.brand).map(e => (
                         <option key={e.key} value={e.key} disabled={!e.usable}>{e.setId ? `   ${e.text}` : e.text}{e.usable ? '' : ' (disabled)'}</option>
                       ))}
                     </select>
+                    <FieldMessage msg={fe.errors.brand} />
                     <p className="text-[11px] text-slate-400 mt-1">Brands and brand sets are set up in the Brands section.</p>
                   </div>
                   <div>
@@ -697,7 +704,8 @@ const Products: React.FC = () => {
                   </div>
                   <div className="md:col-span-2">
                     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Item Name*</label>
-                    <input name="itemName" value={formData.itemName} onChange={handleInputChange} type="text" className="w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm" placeholder="e.g. 5-Ply Corrugated Outer" required />
+                    <input name="itemName" value={formData.itemName} onChange={handleInputChange} type="text" {...fe.field('itemName', "w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm")} placeholder="e.g. 5-Ply Corrugated Outer" />
+                    <FieldMessage msg={fe.errors.itemName} />
                   </div>
                   <div className="md:col-span-2">
                     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Description</label>
@@ -706,7 +714,7 @@ const Products: React.FC = () => {
                   <div>
                     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Unit Size*</label>
                     <div className="flex gap-2">
-                      <input name="unitSize" value={formData.unitSize} onChange={handleInputChange} type="text" className="flex-1 px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm" placeholder="e.g. 60x40x40" required />
+                      <input name="unitSize" value={formData.unitSize} onChange={handleInputChange} type="text" {...fe.field('unitSize', "flex-1 min-w-0 px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm")} placeholder="e.g. 60x40x40" />
                       <select name="measuringUnit" value={formData.measuringUnit} onChange={handleInputChange} className="w-24 px-3 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm">
                         <option value="">Unit</option>
                         {measuringUnits.map(u => (
@@ -714,6 +722,7 @@ const Products: React.FC = () => {
                         ))}
                       </select>
                     </div>
+                    <FieldMessage msg={fe.errors.unitSize} />
                   </div>
                   <div>
                     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Packing</label>
@@ -763,7 +772,7 @@ const Products: React.FC = () => {
                       <select
                         value={d.vendorId}
                         onChange={e => { const v = e.target.value; if (mainVendorId === d.vendorId) setMainVendorId(''); updateSupplierDraft(idx, x => ({ ...x, vendorId: v })); }}
-                        className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-bold bg-white flex-1"
+                        {...fe.field(`supplier-${idx}`, "w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-bold bg-white flex-1")}
                       >
                         <option value="">-- Choose Supplier --</option>
                         {vendors
@@ -774,6 +783,7 @@ const Products: React.FC = () => {
                         <button type="button" onClick={() => { if (mainVendorId === d.vendorId) setMainVendorId(''); setSupplierDrafts(prev => prev.filter((_, i) => i !== idx)); }} className="px-3 py-2.5 text-xs font-bold text-slate-500 hover:text-red-600">Remove</button>
                       )}
                     </div>
+                    <FieldMessage msg={fe.errors[`supplier-${idx}`]} />
                     <label className="flex items-center gap-2 text-xs font-bold text-slate-600">
                       <input type="radio" name="mainSupplier" disabled={!d.vendorId} checked={!!d.vendorId && mainVendorId === d.vendorId} onChange={() => setMainVendorId(d.vendorId)} />
                       Main supplier
@@ -784,13 +794,15 @@ const Products: React.FC = () => {
                         <div key={pIdx} className="grid grid-cols-2 md:grid-cols-[1fr_1fr_2fr_auto] gap-2 items-end">
                           <div>
                             <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">Price per piece (PKR)*</label>
-                            <input type="number" step="0.001" min="0" value={r.price} placeholder="0.00" className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-bold bg-white"
+                            <input type="number" step="0.001" min="0" value={r.price} placeholder="0.00" {...fe.field(`price-${idx}-${pIdx}`, "w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-bold bg-white")}
                               onChange={e => updateSupplierDraft(idx, x => ({ ...x, prices: x.prices.map((pr, i) => i === pIdx ? { ...pr, price: e.target.value } : pr) }))} />
+                            <FieldMessage msg={fe.errors[`price-${idx}-${pIdx}`]} />
                           </div>
                           <div>
                             <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">Starts on*</label>
-                            <input type="date" value={r.effectiveDate} className="w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-bold bg-white"
+                            <input type="date" value={r.effectiveDate} {...fe.field(`date-${idx}-${pIdx}`, "w-full px-3 py-2.5 rounded-xl border border-slate-200 focus:ring-2 focus:ring-indigo-500 outline-none text-sm font-bold bg-white")}
                               onChange={e => updateSupplierDraft(idx, x => ({ ...x, prices: x.prices.map((pr, i) => i === pIdx ? { ...pr, effectiveDate: e.target.value } : pr) }))} />
+                            <FieldMessage msg={fe.errors[`date-${idx}-${pIdx}`]} />
                           </div>
                           <div className="col-span-2 md:col-span-1">
                             <label className="block text-[9px] font-black text-slate-400 uppercase mb-1">Note</label>
@@ -817,7 +829,7 @@ const Products: React.FC = () => {
               </div>
 
               {priceWarning && <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm font-bold">{priceWarning}</div>}
-              {formError && <div className="p-3 rounded-xl bg-red-50 text-red-700 text-sm font-bold">{formError}</div>}
+              {formError && <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm font-bold" role="alert">{formError}</div>}
 
               <div className="flex flex-col sm:flex-row justify-end gap-3 md:gap-4 pt-6 md:pt-10 border-t border-slate-100">
                 <button type="button" onClick={() => setShowAddModal(false)} className="px-6 md:px-8 py-3 md:py-4 rounded-xl md:rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors uppercase tracking-widest text-[10px] order-2 sm:order-1">Discard</button>
