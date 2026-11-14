@@ -129,6 +129,10 @@ export const db = {
   async upsertUser(u: User) {
     return supabase.from('users').upsert(userToDb(u));
   },
+  // Changes only a user's vendor list (D43), so nothing else on the user is overwritten
+  async setAllowedVendors(userId: string, ids: string[]) {
+    return supabase.from('users').update({ allowed_vendor_ids: ids.length > 0 ? JSON.stringify(ids) : null }).eq('id', userId);
+  },
   async deleteUser(id: string) {
     return supabase.from('users').delete().eq('id', id);
   },

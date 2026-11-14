@@ -4,13 +4,14 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { CRMContext, generateId } from '../App';
 import { Icons } from '../constants';
 import { Brand, BrandSet, Category, Product, ProductActivity, ProductActivityType, ProductPrice, ProductSupplier, UserRole } from '../types';
-import { buildProductTitle, contentsPart, disabledBrandNames, entryText, productBrandParts } from '../services/brands';
+import { buildProductTitle, capacityText, capacityErrors, readCapacity, disabledBrandNames, entryText, productBrandParts } from '../services/brands';
 import { db } from '../services/db';
 import { notSavedMessage, errorBoxCls } from '../services/errors';
 import { useFieldErrors, FieldErrors } from '../services/formErrors';
 import FieldMessage from '../components/FieldMessage';
+import { ErrorBox } from '../components/Dialog';
 import LinkPicker from '../components/LinkPicker';
-import { categoryOf, categoryFullName, categoryLabel, sortCategories } from '../services/categories';
+import { categoryOf, categoryFullName, categoryLabel, sortCategories, productCategoryName, productSizeLabel } from '../services/categories';
 import { localToday, mainSupplier, activeSuppliers, orderedSuppliers, priceOn, priceRecordOn, sortPrices, supplierOf, hasSupplier } from '../services/pricing';
 import { productPermissions } from '../services/permissions';
 
@@ -87,7 +88,6 @@ const ProductDetail: React.FC = () => {
     const withLog = logError ? updated : { ...updated, activity: [entry, ...updated.activity] };
     setProducts(prev => prev.map(p => p.id === updated.id ? withLog : p));
     if (logError) setActionError(`The change was saved, but the activity log was not: ${logError.message}`);
-    return withLog;
   };
 
   // Links several products in one go (search picker, agreed 14 Nov 2026). Still two-way, and each link
@@ -98,37 +98,40 @@ const ProductDetail: React.FC = () => {
     const res = await db.addProductLinks(product.id, others.map(o => o.id), currentUser?.name);
     if (res.error) return notSavedMessage(res.error, others.length === 1 ? 'The link' : 'The links', 'added');
     const mine = [...(product.relatedProductIds || []).filter(x => !ids.includes(x)), ...others.map(o => o.id)];
-    await db.setRelatedMirror(product.id, mine);
-    let me: Product = { ...product, relatedProductIds: mine };
-    for (const other of others) {
-      const theirs = [...(other.relatedProductIds || []).filter(x => x !== product.id), product.id];
-      await db.setRelatedMirror(other.id, theirs);
-      me = await logActivity(me, 'LINK_ADDED', `Linked to "${other.title}"`);
-      await logActivity({ ...other, relatedProductIds: theirs }, 'LINK_ADDED', `Linked to "${product.title}"`);
-    }
+    const related = new Map<string, string[]>([[product.id, mine]]);
+    others.forEach(o => related.set(o.id, [...(o.relatedProductIds || []).filter(x => x !== product.id), product.id]));
+    // Every product's link list, then every history line, is written at the same time (not one by one)
+    await Promise.all([...related].map(([id, list]) => db.setRelatedMirror(id, list)));
+    const at = new Date().toISOString();
+    const entry = (productId: string, details: string): ProductActivity =>
+      ({ id: generateId(), productId, type: 'LINK_ADDED', details, userId: currentUser?.id, userName: currentUser?.name, at });
+    const entries = others.flatMap(o => [entry(product.id, `Linked to "${o.title}"`), entry(o.id, `Linked to "${product.title}"`)]);
+    const results = await Promise.all(entries.map(e => db.insertProductActivity(e)));
+    const logged = entries.filter((_, i) => !results[i].error);
+    // One screen update for all the products involved; the newest history line first, as before
+    setProducts(prev => prev.map(p => related.has(p.id)
+      ? { ...p, relatedProductIds: related.get(p.id), activity: [...logged.filter(e => e.productId === p.id).reverse(), ...p.activity] }
+      : p));
+    const logError = results.find(r => r.error)?.error;
+    if (logError) setActionError(`The links were saved, but some activity log entries were not: ${logError.message}`);
     return '';
   };
 
-  // Two-way links: added or removed on both products, and recorded in both products' history
-  const changeLink = async (otherId: string, add: boolean) => {
+  // Removing a link removes it from both products and is recorded in both histories (links are added with linkMany)
+  const removeLink = async (otherId: string) => {
     const other = products.find(p => p.id === otherId);
     if (!other) return;
     setActionError('');
-    const res = add
-      ? await db.addProductLinks(product.id, [otherId], currentUser?.name)
-      : await db.removeProductLink(product.id, otherId);
+    const res = await db.removeProductLink(product.id, otherId);
     if (res.error) {
-      setActionError(notSavedMessage(res.error, 'The link', add ? 'added' : 'removed'));
+      setActionError(notSavedMessage(res.error, 'The link', 'removed'));
       return;
     }
-    const mine = add ? [...(product.relatedProductIds || []).filter(x => x !== otherId), otherId] : (product.relatedProductIds || []).filter(x => x !== otherId);
-    const theirs = add ? [...(other.relatedProductIds || []).filter(x => x !== product.id), product.id] : (other.relatedProductIds || []).filter(x => x !== product.id);
-    await db.setRelatedMirror(product.id, mine);
-    await db.setRelatedMirror(otherId, theirs);
-    await logActivity({ ...product, relatedProductIds: mine }, add ? 'LINK_ADDED' : 'LINK_REMOVED',
-      add ? `Linked to "${other.title}"` : `Link to "${other.title}" removed`);
-    await logActivity({ ...other, relatedProductIds: theirs }, add ? 'LINK_ADDED' : 'LINK_REMOVED',
-      add ? `Linked to "${product.title}"` : `Link to "${product.title}" removed`);
+    const mine = (product.relatedProductIds || []).filter(x => x !== otherId);
+    const theirs = (other.relatedProductIds || []).filter(x => x !== product.id);
+    await Promise.all([db.setRelatedMirror(product.id, mine), db.setRelatedMirror(otherId, theirs)]);
+    await logActivity({ ...product, relatedProductIds: mine }, 'LINK_REMOVED', `Link to "${other.title}" removed`);
+    await logActivity({ ...other, relatedProductIds: theirs }, 'LINK_REMOVED', `Link to "${product.title}" removed`);
   };
 
   const setArchived = async (archived: boolean) => {
@@ -242,10 +245,10 @@ const ProductDetail: React.FC = () => {
 
   // Last 10 deliveries, or all of them when extended history is shown
   const lastDeliveries = showAllDeliveries ? productDeliveries : productDeliveries.slice(0, 10);
-  const sizeLabel = product.unitSize ? `${product.unitSize}${product.measuringUnit ? ` ${product.measuringUnit}` : ''}` : '';
+  const sizeLabel = productSizeLabel(product);
   // The parent brand's optional short label shows under the name; disabled brands get a note
   const brandLabel = ctx.brands.find(b => b.id === product.brandParentId)?.label;
-  const categoryName = categoryFullName(categoryOf(product, ctx.categories)) || product.category;
+  const categoryName = productCategoryName(product, ctx.categories);
   const disabledBrands = disabledBrandNames(product, ctx.brands, ctx.brandSets);
   const activityShown = showAllActivity ? product.activity : product.activity.slice(0, 10);
   const btn = "flex-1 md:flex-none px-4 md:px-5 py-2.5 md:py-3 bg-white border border-slate-200 rounded-xl font-semibold text-slate-600 hover:bg-slate-50 transition-all shadow-sm text-sm";
@@ -314,18 +317,18 @@ const ProductDetail: React.FC = () => {
               // BUG-283: a compact list, one row per linked product
               <ul className="divide-y divide-slate-100 border border-slate-100 rounded-xl overflow-hidden">
                 {relatedProducts.map(rp => {
-                  const size = [rp.unitSize, rp.measuringUnit].filter(Boolean).join(' ');
+                  const size = productSizeLabel(rp);
                   return (
                     <li key={rp.id} className={`flex items-start justify-between gap-3 px-3 py-2.5 hover:bg-slate-50 ${rp.isArchived ? 'opacity-60' : ''}`}>
                       <div className="min-w-0">
                         <Link to={`/products/${rp.id}`} className="text-xs md:text-sm font-bold text-slate-900 hover:text-indigo-600 hover:underline break-words">{rp.title}</Link>
                         <div className="text-[10px] text-slate-500 font-bold mt-0.5">
-                          {categoryFullName(categoryOf(rp, ctx.categories)) || rp.category}{size ? ` · ${size}` : ''}
+                          {productCategoryName(rp, ctx.categories)}{size ? ` · ${size}` : ''}
                           {rp.isArchived && <span className="ml-1.5 px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 uppercase tracking-widest text-[9px]">Archived</span>}
                         </div>
                       </div>
                       {can.manageLinks && (
-                        <button onClick={() => changeLink(rp.id, false)} title="Remove this link from both products" className="text-[10px] font-black text-slate-400 hover:text-red-600 uppercase tracking-widest shrink-0 pt-0.5">Remove</button>
+                        <button onClick={() => removeLink(rp.id)} title="Remove this link from both products" className="text-[10px] font-black text-slate-400 hover:text-red-600 uppercase tracking-widest shrink-0 pt-0.5">Remove</button>
                       )}
                     </li>
                   );
@@ -751,11 +754,11 @@ const MetadataModal: React.FC<{
     unitSize: product.unitSize,
     measuringUnit: product.measuringUnit || '',
     packing: product.packing,
-    itemCapacity: product.itemCapacity !== undefined && product.itemCapacity !== null ? String(product.itemCapacity) : '',
+    itemCapacity: capacityText(product.itemCapacity),
     itemCapacityUnit: product.itemCapacityUnit || '',
   });
   const generatedTitle = useMemo(() => {
-    return buildProductTitle(formData.category, brandParts.parentName, brandParts.childNames, formData.itemName, contentsPart(formData.itemCapacity, formData.itemCapacityUnit, formData.packing));
+    return buildProductTitle(formData.category, brandParts.parentName, brandParts.childNames, formData.itemName, formData);
   }, [formData, brandParts.parentName, brandParts.childNames.join(',')]);
 
   const isDirty = useMemo(() => {
@@ -767,7 +770,7 @@ const MetadataModal: React.FC<{
       formData.unitSize !== product.unitSize ||
       formData.measuringUnit !== (product.measuringUnit || '') ||
       formData.packing !== product.packing ||
-      formData.itemCapacity !== (product.itemCapacity !== undefined && product.itemCapacity !== null ? String(product.itemCapacity) : '') ||
+      formData.itemCapacity !== capacityText(product.itemCapacity) ||
       formData.itemCapacityUnit !== (product.itemCapacityUnit || '')
     );
     return fieldChanged;
@@ -790,19 +793,13 @@ const MetadataModal: React.FC<{
       if (sameName) errs.itemName = `Another product already has this name: "${sameName.title}". Change the item name, e.g. add "Large".`;
     }
     // D42: size is optional; a capacity must be a number above 0 and needs its unit
-    if (formData.itemCapacity.trim() !== '') {
-      const cap = parseFloat(formData.itemCapacity);
-      if (isNaN(cap) || cap <= 0) errs.itemCapacity = 'Enter a capacity above 0, e.g. 30.';
-      else if (!formData.itemCapacityUnit) errs.itemCapacityUnit = 'Choose the unit, e.g. ML.';
-    }
+    Object.assign(errs, capacityErrors(formData.itemCapacity, formData.itemCapacityUnit));
     if (fe.show(errs)) return;
     // Linked products are managed on the product page, not here
-    const hasCapacity = formData.itemCapacity.trim() !== '';
     onSave({
       ...formData,
       // D42: stored as a number, or nothing when left empty
-      itemCapacity: hasCapacity ? parseFloat(formData.itemCapacity) : undefined,
-      itemCapacityUnit: hasCapacity ? formData.itemCapacityUnit : undefined,
+      ...readCapacity(formData.itemCapacity, formData.itemCapacityUnit),
       title: generatedTitle,
       categoryId: categories.find(c => c.name === formData.category)?.id,
     });
@@ -887,7 +884,7 @@ const MetadataModal: React.FC<{
             </div>
           </div>
 
-          {saveError && <div className={errorBoxCls} role="alert">{saveError}</div>}
+          <ErrorBox msg={saveError} />
 
           <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 md:gap-4 pt-4 md:pt-6 border-t border-slate-100">
             <button type="button" onClick={onClose} className="px-6 md:px-8 py-3 md:py-4 rounded-xl md:rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors uppercase tracking-widest text-[10px]">Cancel</button>
@@ -1004,7 +1001,7 @@ const PriceModal: React.FC<{
           <p>This price starts on {confirmPast.values.effectiveDate}, which is in the past.</p>
           <p>Orders already placed keep the price they were placed at. <b>{confirmPast.count} order{confirmPast.count === 1 ? '' : 's'}</b> with {vendorName(vendorId)} for this product since that date will not change.</p>
         </div>
-        {saveError && <div className={errorBoxCls} role="alert">{saveError}</div>}
+        <ErrorBox msg={saveError} />
         <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 pt-2">
           <button type="button" onClick={() => setConfirmPast(null)} className={cancelCls}>Go back</button>
           <button type="button" disabled={saving} onClick={() => save(confirmPast.values)} className={saveCls}>{saving ? 'Saving...' : 'Save price'}</button>
@@ -1029,7 +1026,7 @@ const PriceModal: React.FC<{
           </div>
         )}
         <PriceFields price={price} date={date} note={note} setPrice={setPrice} setDate={setDate} setNote={setNote} fe={fe} />
-        {saveError && <div className={errorBoxCls} role="alert">{saveError}</div>}
+        <ErrorBox msg={saveError} />
         <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 md:gap-4 pt-4 border-t border-slate-100">
           <button type="button" onClick={onClose} className={cancelCls}>Cancel</button>
           <button type="submit" disabled={saving} className={saveCls}>{saving ? 'Saving...' : editing ? 'Save correction' : 'Add price'}</button>
@@ -1088,7 +1085,7 @@ const SupplierModal: React.FC<{
               <input type="checkbox" checked={makeMain} onChange={e => setMakeMain(e.target.checked)} /> Make this the main supplier
             </label>
           )}
-          {saveError && <div className={errorBoxCls} role="alert">{saveError}</div>}
+          <ErrorBox msg={saveError} />
           <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 md:gap-4 pt-4 border-t border-slate-100">
             <button type="button" onClick={onClose} className={cancelCls}>Cancel</button>
             <button type="submit" disabled={saving} className={saveCls}>{saving ? 'Saving...' : replacing ? 'Replace' : 'Add supplier'}</button>
@@ -1115,7 +1112,7 @@ const StopMainModal: React.FC<{
         <option value="">No main supplier</option>
         {others.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
       </select>
-      {saveError && <div className={errorBoxCls} role="alert">{saveError}</div>}
+      <ErrorBox msg={saveError} />
       <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 pt-2">
         <button type="button" onClick={onClose} className={cancelCls}>Cancel</button>
         <button type="button" onClick={() => onConfirm(choice || null)} className={saveCls}>Stop supplier</button>
@@ -1128,7 +1125,7 @@ const ConfirmModal: React.FC<{ title: string; message: string; confirmLabel?: st
   ({ title, message, confirmLabel, onClose, onConfirm, saveError }) => (
   <ModalShell title={title} onClose={onClose}>
     <p className="text-sm text-slate-600">{message}</p>
-    {saveError && <div className={errorBoxCls} role="alert">{saveError}</div>}
+    <ErrorBox msg={saveError} />
     <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 pt-2">
       <button type="button" onClick={onClose} className={cancelCls}>{confirmLabel ? 'Cancel' : 'Close'}</button>
       {confirmLabel && <button type="button" onClick={onConfirm} className="px-8 py-3 md:py-4 rounded-xl md:rounded-2xl font-black text-white bg-red-600 hover:bg-red-700 uppercase tracking-widest text-[10px]">{confirmLabel}</button>}

@@ -1,4 +1,5 @@
 import { Brand, BrandSet, Product, User, UserRole } from '../types';
+import type { FieldErrors } from './formErrors';
 
 // Brands rules agreed 12 Nov 2026 (Decisions Log D37)
 
@@ -21,19 +22,33 @@ export const entryText = (parentName: string, childNames: string[]) =>
 export const setText = (set: BrandSet, brands: Brand[]) =>
   entryText(brands.find(b => b.id === set.parentId)?.name || '', setChildNames(set, brands));
 
-// Product name = Category + Parent brand + [child brands A-Z] + Item name + Packing
-// D42: the end of the name, "30 ML X 26 Bottles"; the X only when both parts are filled
-export const contentsPart = (capacity?: number | string, unit?: string, packing?: string) =>
-  [capacity !== undefined && capacity !== null && String(capacity).trim() !== '' ? `${String(capacity).trim()} ${unit || ''}`.trim() : '', (packing || '').trim()]
-    .filter(Boolean)
-    .join(' X ');
+// D42: what goes in the carton. In forms the capacity is text; on a product it is a number.
+export type ProductContents = { itemCapacity?: number | string | null; itemCapacityUnit?: string | null; packing?: string | null };
 
-// Name = Category word + Parent brand + [child brands] + Item name + contents (D37, D42)
-export const buildProductTitle = (category: string, parentName: string, childNames: string[], itemName: string, packing: string) =>
-  [category, parentName ? entryText(parentName, childNames) : '', itemName, packing]
+// The end of the name, "30 ML X 26 Bottles"; the X only when both parts are filled
+export const contentsPart = ({ itemCapacity, itemCapacityUnit, packing }: ProductContents) => {
+  const cap = String(itemCapacity ?? '').trim();
+  return [cap ? `${cap} ${itemCapacityUnit || ''}`.trim() : '', (packing || '').trim()].filter(Boolean).join(' X ');
+};
+
+// Name = Category word + Parent brand + [child brands A-Z] + Item name + contents (D37, D42)
+export const buildProductTitle = (category: string, parentName: string, childNames: string[], itemName: string, contents: ProductContents) =>
+  [category, parentName ? entryText(parentName, childNames) : '', itemName, contentsPart(contents)]
     .map(s => (s || '').trim())
     .filter(Boolean)
     .join(' ');
+
+// Item capacity in a form: shown as text, checked, and turned back into a number (or nothing) on save
+export const capacityText = (capacity?: number | null) => String(capacity ?? '');
+export const capacityErrors = (capacity: string, unit: string): FieldErrors => {
+  if (capacity.trim() === '') return {};
+  const cap = parseFloat(capacity);
+  if (isNaN(cap) || cap <= 0) return { itemCapacity: 'Enter a capacity above 0, e.g. 30.' };
+  return unit ? {} : { itemCapacityUnit: 'Choose the unit, e.g. ML.' };
+};
+export const readCapacity = (capacity: string, unit: string) => capacity.trim() !== ''
+  ? { itemCapacity: parseFloat(capacity), itemCapacityUnit: unit }
+  : { itemCapacity: undefined, itemCapacityUnit: undefined };
 
 // The brand part of a product, from its brand entry (falls back to the old typed brand)
 export const productBrandParts = (p: Pick<Product, 'brandParentId' | 'brandSetId' | 'brand'>, brands: Brand[], sets: BrandSet[]) => {
@@ -50,7 +65,7 @@ export const productBrandParts = (p: Pick<Product, 'brandParentId' | 'brandSetId
 
 export const productTitleFor = (p: Pick<Product, 'brandParentId' | 'brandSetId' | 'brand' | 'category' | 'itemName' | 'packing' | 'itemCapacity' | 'itemCapacityUnit'>, brands: Brand[], sets: BrandSet[]) => {
   const parts = productBrandParts(p, brands, sets);
-  return buildProductTitle(p.category, parts.parentName, parts.childNames, p.itemName, contentsPart(p.itemCapacity, p.itemCapacityUnit, p.packing));
+  return buildProductTitle(p.category, parts.parentName, parts.childNames, p.itemName, p);
 };
 
 // Names of the disabled brands on a product: its parent, its set, or any child in the set

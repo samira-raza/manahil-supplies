@@ -18,6 +18,7 @@ import BuyerTeam from './pages/BuyerTeam';
 import { supabase } from './services/supabase';
 import { notSavedMessage, errorBoxCls } from './services/errors';
 import { idleExpired, takeIdleSignOutNote, noteIdleSignOut } from './services/idle';
+import { hasAllVendors } from './services/permissions';
 import IdleLogout from './components/IdleLogout';
 import {
   vendorFromDb, productFromDb, orderFromDb, deliveryFromDb,
@@ -278,7 +279,7 @@ const useCRMStore = () => {
   };
 
   // Filter vendors for admin users based on their allowedVendorIds
-  const visibleVendors = (currentUser?.role === UserRole.ADMIN && currentUser.allowedVendorIds && currentUser.allowedVendorIds.length > 0)
+  const visibleVendors = (currentUser?.role === UserRole.ADMIN && !hasAllVendors(currentUser))
     ? vendors.filter(v => currentUser.allowedVendorIds!.includes(v.id))
     : vendors;
 

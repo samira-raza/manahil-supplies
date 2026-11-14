@@ -5,6 +5,7 @@ import { Brand, BrandActivity, BrandSet, Product } from '../types';
 import { Icons } from '../constants';
 import { db } from '../services/db';
 import { notSavedMessage, errorBoxCls } from '../services/errors';
+import { Modal, ConfirmButtons, ConfirmDialog, ErrorBox } from '../components/Dialog';
 import { useFieldErrors, FieldErrors } from '../services/formErrors';
 import FieldMessage from '../components/FieldMessage';
 import {
@@ -17,8 +18,6 @@ import {
 const inputCls = 'w-full px-4 py-3 rounded-xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm';
 const labelCls = 'block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2';
 const smallBtn = 'text-[10px] font-black uppercase tracking-widest px-2.5 py-1 rounded-lg border border-slate-200 bg-white text-slate-600 hover:border-indigo-300 hover:text-indigo-600';
-const primaryBtn = 'px-6 py-3 rounded-xl font-black text-white bg-indigo-600 hover:bg-indigo-700 uppercase tracking-widest text-[10px] disabled:opacity-50';
-const cancelBtn = 'px-6 py-3 rounded-xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 uppercase tracking-widest text-[10px]';
 const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
 type Dialog =
@@ -399,47 +398,8 @@ const Brands: React.FC = () => {
 
 // ---- Dialogs ----
 
-const Modal: React.FC<{ title: string; subtitle?: string; onClose: () => void; children: React.ReactNode }> = ({ title, subtitle, onClose, children }) => (
-  <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-2 md:p-4">
-    <div className="bg-white rounded-2xl md:rounded-[32px] w-full max-w-lg shadow-2xl border border-slate-200 max-h-[95vh] flex flex-col">
-      <div className="p-4 md:p-6 border-b border-slate-100 flex justify-between items-start gap-3">
-        <div>
-          <h2 className="text-lg md:text-xl font-black text-slate-900">{title}</h2>
-          {subtitle && <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">{subtitle}</p>}
-        </div>
-        <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-xl text-slate-400">✕</button>
-      </div>
-      <div className="p-4 md:p-6 overflow-y-auto space-y-4">{children}</div>
-    </div>
-  </div>
-);
 
-const ConfirmButtons: React.FC<{ label: string; onCancel: () => void; onConfirm: () => void; disabled?: boolean }> = ({ label, onCancel, onConfirm, disabled }) => {
-  const [busy, setBusy] = useState(false);
-  return (
-    <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 pt-2">
-      <button type="button" onClick={onCancel} className={cancelBtn}>Cancel</button>
-      <button type="button" disabled={busy || disabled} onClick={async () => { setBusy(true); await onConfirm(); setBusy(false); }} className={primaryBtn}>{busy ? 'Saving...' : label}</button>
-    </div>
-  );
-};
 
-// A confirmation box that stays open and shows the reason when the action fails (BUG-281)
-const ConfirmDialog: React.FC<{ title: string; message: string; label: string; onClose: () => void; run: () => Promise<string> }> =
-  ({ title, message, label, onClose, run }) => {
-  const [error, setError] = useState('');
-  return (
-    <Modal title={title} onClose={onClose}>
-      <p className="text-sm text-slate-600">{message}</p>
-      {error && <div className={errorBoxCls} role="alert">{error}</div>}
-      <ConfirmButtons label={label} onCancel={onClose} onConfirm={async () => {
-        setError('');
-        const failed = await run();
-        if (failed) setError(failed); else onClose();
-      }} />
-    </Modal>
-  );
-};
 
 const ParentDialog: React.FC<{ brand?: Brand; parents: Brand[]; onClose: () => void; onSave: (v: { name: string; initials: string; label: string }) => Promise<string> }> =
   ({ brand, parents, onClose, onSave }) => {
@@ -489,7 +449,7 @@ const ParentDialog: React.FC<{ brand?: Brand; parents: Brand[]; onClose: () => v
         <div>
           <label className={labelCls}>Initials* (2 or 3 capital letters, used in product codes)</label>
           <input {...fe.field('initials', inputCls)} value={initials} maxLength={3} onChange={e => { setInitialsEdited(true); setInitials(e.target.value.toUpperCase().replace(/[^A-Z]/g, '')); }} placeholder="e.g. BL" />
-          {fe.errors.initials && <FieldMessage msg={fe.errors.initials} />}
+          <FieldMessage msg={fe.errors.initials} />
           {usualHolder && <p className="text-xs text-amber-700 font-bold mt-1">{usual} is already used by {usualHolder.name}. {initials && !holder ? `Suggested: ${initials}.` : ''}</p>}
           {holder && !fe.errors.initials && <p className="text-xs text-red-600 font-bold mt-1">{initials} is already used by {holder.name}.</p>}
           <p className="text-[11px] text-slate-400 mt-1">You can change them now. After saving, only the Super Admin can change them.</p>
@@ -500,7 +460,7 @@ const ParentDialog: React.FC<{ brand?: Brand; parents: Brand[]; onClose: () => v
         <input className={inputCls} value={label} onChange={e => setLabel(e.target.value)} placeholder="e.g. Charcoal Range" />
         <p className="text-[11px] text-slate-400 mt-1">Shown under product names and searchable. The name always keeps the full list of child brands.</p>
       </div>
-      {error && <div className={errorBoxCls} role="alert">{error}</div>}
+      <ErrorBox msg={error} />
       <ConfirmButtons label={brand ? 'Save changes' : 'Add brand'} onCancel={onClose} onConfirm={save} />
     </Modal>
   );
@@ -527,7 +487,7 @@ const InitialsDialog: React.FC<{ brand: Brand; parents: Brand[]; onClose: () => 
       <input {...fe.field('initials', inputCls)} value={initials} maxLength={3} onChange={e => setInitials(e.target.value.toUpperCase().replace(/[^A-Z]/g, ''))} />
       <FieldMessage msg={fe.errors.initials} />
       {holder && !fe.errors.initials && <p className="text-xs text-red-600 font-bold">{initials} is already used by {holder.name}.</p>}
-      {error && <div className={errorBoxCls} role="alert">{error}</div>}
+      <ErrorBox msg={error} />
       <ConfirmButtons label="Change initials" onCancel={onClose} onConfirm={save} />
     </Modal>
   );
@@ -558,7 +518,7 @@ const ChildDialog: React.FC<{ parent: Brand; brand?: Brand; brands: Brand[]; onC
         {clash && !fe.errors.name && <p className="text-xs text-red-600 font-bold mt-1">Already exists under {clashParent}.</p>}
         {brand && <p className="text-[11px] text-slate-400 mt-1">Every product using it gets its name updated.</p>}
       </div>
-      {error && <div className={errorBoxCls} role="alert">{error}</div>}
+      <ErrorBox msg={error} />
       <ConfirmButtons label={brand ? 'Save' : 'Add child brand'} onCancel={onClose} onConfirm={save} />
     </Modal>
   );
@@ -579,7 +539,7 @@ const MoveDialog: React.FC<{ brand: Brand; parents: Brand[]; onClose: () => void
         <option value="">-- Choose new parent --</option>
         {parents.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
       </select>
-      {error && <div className={errorBoxCls} role="alert">{error}</div>}
+      <ErrorBox msg={error} />
       <ConfirmButtons label="Move" disabled={!parentId} onCancel={onClose} onConfirm={save} />
     </Modal>
   );
@@ -614,7 +574,7 @@ const SetDialog: React.FC<{ parent: Brand; children: Brand[]; existing: BrandSet
       <FieldMessage msg={fe.errors.children} />
       {picked.length > 0 && <div className="p-3 rounded-xl bg-indigo-50 text-indigo-800 text-sm font-bold">{preview}</div>}
       {duplicate && !fe.errors.children && <p className="text-xs text-red-600 font-bold">This brand set already exists.</p>}
-      {error && <div className={errorBoxCls} role="alert">{error}</div>}
+      <ErrorBox msg={error} />
       <ConfirmButtons label="Save brand set" onCancel={onClose} onConfirm={save} />
     </Modal>
   );

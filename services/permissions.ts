@@ -5,6 +5,10 @@ import { User, UserRole } from '../types';
 const isSuperAdmin = (u?: User | null) => u?.role === UserRole.SUPER_ADMIN;
 const isAdmin = (u?: User | null) => u?.role === UserRole.ADMIN;
 
+// D43: an Admin with an empty vendor list has "All vendors, including new ones"
+export const hasAllVendors = (u?: Pick<User, 'allowedVendorIds'> | null) =>
+  !u?.allowedVendorIds || u.allowedVendorIds.length === 0;
+
 export const productPermissions = (u?: User | null) => ({
   createProducts: isSuperAdmin(u) || (isAdmin(u) && !!u?.canCreateProducts),
   editProductInfo: isSuperAdmin(u),
