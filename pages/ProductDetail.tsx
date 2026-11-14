@@ -290,22 +290,26 @@ const ProductDetail: React.FC = () => {
           <div className="bg-white p-5 md:p-8 rounded-2xl md:rounded-[32px] border border-slate-200 shadow-sm">
             <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 md:mb-6">Linked Product Family</h3>
             {relatedProducts.length > 0 ? (
-              <div className="space-y-3">
-                {relatedProducts.map(rp => (
-                  <div key={rp.id} className={`group relative bg-slate-50 p-4 md:p-5 rounded-2xl border border-slate-100 hover:border-indigo-300 transition-all ${rp.isArchived ? 'opacity-60' : ''}`}>
-                    <div className="flex justify-between items-start gap-2">
-                      <div className="text-sm font-black text-slate-900 mb-1 break-words">{rp.title}</div>
+              // BUG-283: a compact list, one row per linked product
+              <ul className="divide-y divide-slate-100 border border-slate-100 rounded-xl overflow-hidden">
+                {relatedProducts.map(rp => {
+                  const size = [rp.unitSize, rp.measuringUnit].filter(Boolean).join(' ');
+                  return (
+                    <li key={rp.id} className={`flex items-start justify-between gap-3 px-3 py-2.5 hover:bg-slate-50 ${rp.isArchived ? 'opacity-60' : ''}`}>
+                      <div className="min-w-0">
+                        <Link to={`/products/${rp.id}`} className="text-xs md:text-sm font-bold text-slate-900 hover:text-indigo-600 hover:underline break-words">{rp.title}</Link>
+                        <div className="text-[10px] text-slate-500 font-bold mt-0.5">
+                          {categoryFullName(categoryOf(rp, ctx.categories)) || rp.category}{size ? ` · ${size}` : ''}
+                          {rp.isArchived && <span className="ml-1.5 px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 uppercase tracking-widest text-[9px]">Archived</span>}
+                        </div>
+                      </div>
                       {can.manageLinks && (
-                        <button onClick={() => changeLink(rp.id, false)} title="Remove this link from both products" className="text-[10px] font-black text-slate-400 hover:text-red-600 uppercase tracking-widest shrink-0">Remove</button>
+                        <button onClick={() => changeLink(rp.id, false)} title="Remove this link from both products" className="text-[10px] font-black text-slate-400 hover:text-red-600 uppercase tracking-widest shrink-0 pt-0.5">Remove</button>
                       )}
-                    </div>
-                    <div className="text-[10px] text-indigo-600 font-bold uppercase mb-2">{rp.category}{rp.isArchived ? ' · Archived' : ''}</div>
-                    <Link to={`/products/${rp.id}`} className="inline-flex items-center gap-2 text-xs font-black text-indigo-600 hover:underline">
-                      View Profile <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M9 5l7 7-7 7" strokeWidth={2}/></svg>
-                    </Link>
-                  </div>
-                ))}
-              </div>
+                    </li>
+                  );
+                })}
+              </ul>
             ) : (
               <div className="py-4 md:py-6 px-4 bg-slate-50 rounded-2xl md:rounded-3xl border-2 border-dashed border-slate-200 text-center text-slate-400 text-xs italic">
                 No related products linked (e.g. Inner Carton)
