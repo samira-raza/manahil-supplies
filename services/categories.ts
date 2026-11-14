@@ -23,6 +23,14 @@ export const sortCategories = (cats: Category[]) =>
 export const categoryOf = (p: Pick<Product, 'categoryId' | 'category'>, cats: Category[]) =>
   (p.categoryId && cats.find(c => c.id === p.categoryId)) || cats.find(c => same(c.name, p.category));
 
+// "Master Carton", from the product's category (falls back to the stored word)
+export const productCategoryName = (p: Pick<Product, 'categoryId' | 'category'>, cats: Category[]) =>
+  categoryFullName(categoryOf(p, cats)) || p.category;
+
+// "60x40x40 cm", or '' when the product has no size
+export const productSizeLabel = (p: Pick<Product, 'unitSize' | 'measuringUnit'>) =>
+  p.unitSize ? [p.unitSize, p.measuringUnit].filter(Boolean).join(' ') : '';
+
 export const productsInCategory = (c: Category, products: Product[]) =>
   products.filter(p => (p.categoryId ? p.categoryId === c.id : same(p.category, c.name)));
 

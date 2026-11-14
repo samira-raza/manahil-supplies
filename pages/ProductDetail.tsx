@@ -11,7 +11,7 @@ import { useFieldErrors, FieldErrors } from '../services/formErrors';
 import FieldMessage from '../components/FieldMessage';
 import { ErrorBox } from '../components/Dialog';
 import LinkPicker from '../components/LinkPicker';
-import { categoryOf, categoryFullName, categoryLabel, sortCategories } from '../services/categories';
+import { categoryOf, categoryFullName, categoryLabel, sortCategories, productCategoryName, productSizeLabel } from '../services/categories';
 import { localToday, mainSupplier, activeSuppliers, orderedSuppliers, priceOn, priceRecordOn, sortPrices, supplierOf, hasSupplier } from '../services/pricing';
 import { productPermissions } from '../services/permissions';
 
@@ -88,7 +88,6 @@ const ProductDetail: React.FC = () => {
     const withLog = logError ? updated : { ...updated, activity: [entry, ...updated.activity] };
     setProducts(prev => prev.map(p => p.id === updated.id ? withLog : p));
     if (logError) setActionError(`The change was saved, but the activity log was not: ${logError.message}`);
-    return withLog;
   };
 
   // Links several products in one go (search picker, agreed 14 Nov 2026). Still two-way, and each link
@@ -99,37 +98,40 @@ const ProductDetail: React.FC = () => {
     const res = await db.addProductLinks(product.id, others.map(o => o.id), currentUser?.name);
     if (res.error) return notSavedMessage(res.error, others.length === 1 ? 'The link' : 'The links', 'added');
     const mine = [...(product.relatedProductIds || []).filter(x => !ids.includes(x)), ...others.map(o => o.id)];
-    await db.setRelatedMirror(product.id, mine);
-    let me: Product = { ...product, relatedProductIds: mine };
-    for (const other of others) {
-      const theirs = [...(other.relatedProductIds || []).filter(x => x !== product.id), product.id];
-      await db.setRelatedMirror(other.id, theirs);
-      me = await logActivity(me, 'LINK_ADDED', `Linked to "${other.title}"`);
-      await logActivity({ ...other, relatedProductIds: theirs }, 'LINK_ADDED', `Linked to "${product.title}"`);
-    }
+    const related = new Map<string, string[]>([[product.id, mine]]);
+    others.forEach(o => related.set(o.id, [...(o.relatedProductIds || []).filter(x => x !== product.id), product.id]));
+    // Every product's link list, then every history line, is written at the same time (not one by one)
+    await Promise.all([...related].map(([id, list]) => db.setRelatedMirror(id, list)));
+    const at = new Date().toISOString();
+    const entry = (productId: string, details: string): ProductActivity =>
+      ({ id: generateId(), productId, type: 'LINK_ADDED', details, userId: currentUser?.id, userName: currentUser?.name, at });
+    const entries = others.flatMap(o => [entry(product.id, `Linked to "${o.title}"`), entry(o.id, `Linked to "${product.title}"`)]);
+    const results = await Promise.all(entries.map(e => db.insertProductActivity(e)));
+    const logged = entries.filter((_, i) => !results[i].error);
+    // One screen update for all the products involved; the newest history line first, as before
+    setProducts(prev => prev.map(p => related.has(p.id)
+      ? { ...p, relatedProductIds: related.get(p.id), activity: [...logged.filter(e => e.productId === p.id).reverse(), ...p.activity] }
+      : p));
+    const logError = results.find(r => r.error)?.error;
+    if (logError) setActionError(`The links were saved, but some activity log entries were not: ${logError.message}`);
     return '';
   };
 
-  // Two-way links: added or removed on both products, and recorded in both products' history
-  const changeLink = async (otherId: string, add: boolean) => {
+  // Removing a link removes it from both products and is recorded in both histories (links are added with linkMany)
+  const removeLink = async (otherId: string) => {
     const other = products.find(p => p.id === otherId);
     if (!other) return;
     setActionError('');
-    const res = add
-      ? await db.addProductLinks(product.id, [otherId], currentUser?.name)
-      : await db.removeProductLink(product.id, otherId);
+    const res = await db.removeProductLink(product.id, otherId);
     if (res.error) {
-      setActionError(notSavedMessage(res.error, 'The link', add ? 'added' : 'removed'));
+      setActionError(notSavedMessage(res.error, 'The link', 'removed'));
       return;
     }
-    const mine = add ? [...(product.relatedProductIds || []).filter(x => x !== otherId), otherId] : (product.relatedProductIds || []).filter(x => x !== otherId);
-    const theirs = add ? [...(other.relatedProductIds || []).filter(x => x !== product.id), product.id] : (other.relatedProductIds || []).filter(x => x !== product.id);
-    await db.setRelatedMirror(product.id, mine);
-    await db.setRelatedMirror(otherId, theirs);
-    await logActivity({ ...product, relatedProductIds: mine }, add ? 'LINK_ADDED' : 'LINK_REMOVED',
-      add ? `Linked to "${other.title}"` : `Link to "${other.title}" removed`);
-    await logActivity({ ...other, relatedProductIds: theirs }, add ? 'LINK_ADDED' : 'LINK_REMOVED',
-      add ? `Linked to "${product.title}"` : `Link to "${product.title}" removed`);
+    const mine = (product.relatedProductIds || []).filter(x => x !== otherId);
+    const theirs = (other.relatedProductIds || []).filter(x => x !== product.id);
+    await Promise.all([db.setRelatedMirror(product.id, mine), db.setRelatedMirror(otherId, theirs)]);
+    await logActivity({ ...product, relatedProductIds: mine }, 'LINK_REMOVED', `Link to "${other.title}" removed`);
+    await logActivity({ ...other, relatedProductIds: theirs }, 'LINK_REMOVED', `Link to "${product.title}" removed`);
   };
 
   const setArchived = async (archived: boolean) => {
@@ -243,10 +245,10 @@ const ProductDetail: React.FC = () => {
 
   // Last 10 deliveries, or all of them when extended history is shown
   const lastDeliveries = showAllDeliveries ? productDeliveries : productDeliveries.slice(0, 10);
-  const sizeLabel = product.unitSize ? `${product.unitSize}${product.measuringUnit ? ` ${product.measuringUnit}` : ''}` : '';
+  const sizeLabel = productSizeLabel(product);
   // The parent brand's optional short label shows under the name; disabled brands get a note
   const brandLabel = ctx.brands.find(b => b.id === product.brandParentId)?.label;
-  const categoryName = categoryFullName(categoryOf(product, ctx.categories)) || product.category;
+  const categoryName = productCategoryName(product, ctx.categories);
   const disabledBrands = disabledBrandNames(product, ctx.brands, ctx.brandSets);
   const activityShown = showAllActivity ? product.activity : product.activity.slice(0, 10);
   const btn = "flex-1 md:flex-none px-4 md:px-5 py-2.5 md:py-3 bg-white border border-slate-200 rounded-xl font-semibold text-slate-600 hover:bg-slate-50 transition-all shadow-sm text-sm";
@@ -315,18 +317,18 @@ const ProductDetail: React.FC = () => {
               // BUG-283: a compact list, one row per linked product
               <ul className="divide-y divide-slate-100 border border-slate-100 rounded-xl overflow-hidden">
                 {relatedProducts.map(rp => {
-                  const size = [rp.unitSize, rp.measuringUnit].filter(Boolean).join(' ');
+                  const size = productSizeLabel(rp);
                   return (
                     <li key={rp.id} className={`flex items-start justify-between gap-3 px-3 py-2.5 hover:bg-slate-50 ${rp.isArchived ? 'opacity-60' : ''}`}>
                       <div className="min-w-0">
                         <Link to={`/products/${rp.id}`} className="text-xs md:text-sm font-bold text-slate-900 hover:text-indigo-600 hover:underline break-words">{rp.title}</Link>
                         <div className="text-[10px] text-slate-500 font-bold mt-0.5">
-                          {categoryFullName(categoryOf(rp, ctx.categories)) || rp.category}{size ? ` · ${size}` : ''}
+                          {productCategoryName(rp, ctx.categories)}{size ? ` · ${size}` : ''}
                           {rp.isArchived && <span className="ml-1.5 px-1.5 py-0.5 rounded bg-slate-200 text-slate-600 uppercase tracking-widest text-[9px]">Archived</span>}
                         </div>
                       </div>
                       {can.manageLinks && (
-                        <button onClick={() => changeLink(rp.id, false)} title="Remove this link from both products" className="text-[10px] font-black text-slate-400 hover:text-red-600 uppercase tracking-widest shrink-0 pt-0.5">Remove</button>
+                        <button onClick={() => removeLink(rp.id)} title="Remove this link from both products" className="text-[10px] font-black text-slate-400 hover:text-red-600 uppercase tracking-widest shrink-0 pt-0.5">Remove</button>
                       )}
                     </li>
                   );

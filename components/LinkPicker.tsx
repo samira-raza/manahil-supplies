@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Category, Product } from '../types';
-import { categoryOf, categoryFullName } from '../services/categories';
+import { productCategoryName, productSizeLabel } from '../services/categories';
 import { ErrorBox } from './Dialog';
 
 // Linked products picker (agreed 14 Nov 2026): type to narrow the list, tick several products,
@@ -24,9 +24,10 @@ const LinkPicker: React.FC<{
 
   // Every typed word must appear in the product name, in any order (e.g. "hemani mtcn")
   const matches = useMemo(() => {
+    if (!open) return [];
     const words = query.toLowerCase().split(/\s+/).filter(Boolean);
     return candidates.filter(p => words.every(w => p.title.toLowerCase().includes(w)));
-  }, [query, candidates]);
+  }, [open, query, candidates]);
 
   const nameOf = (id: string) => candidates.find(p => p.id === id)?.title || 'Unknown product';
   const toggle = (id: string) => setPicked(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -49,15 +50,17 @@ const LinkPicker: React.FC<{
   );
   if (!open) return openButton;
 
+  const title = verb === 'Link' ? 'Link products' : 'Add linked products';
+
   // The picker opens as its own window (drawn on top of the page), so it has room even from a narrow column
   return (<>
     {openButton}
     {createPortal(
     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[300] flex items-center justify-center p-2 md:p-4" onKeyDown={e => { if (e.key === 'Escape') close(); }}>
-    <div className="bg-white rounded-2xl w-full max-w-xl shadow-2xl border border-slate-200 max-h-[90vh] flex flex-col" role="dialog" aria-modal="true" aria-label={verb === 'Link' ? 'Link products' : 'Add linked products'}>
+    <div className="bg-white rounded-2xl w-full max-w-xl shadow-2xl border border-slate-200 max-h-[90vh] flex flex-col" role="dialog" aria-modal="true" aria-label={title}>
       <div className="p-4 md:p-5 border-b border-slate-100 flex justify-between items-start gap-3">
         <div>
-          <h2 className="text-lg font-black text-slate-900">{verb === 'Link' ? 'Link products' : 'Add linked products'}</h2>
+          <h2 className="text-lg font-black text-slate-900">{title}</h2>
           <p className="text-[11px] text-slate-500 mt-0.5">Type to narrow the list, tick the products, then {verb.toLowerCase()} them in one go.</p>
         </div>
         <button type="button" onClick={close} className="p-2 hover:bg-slate-100 rounded-xl text-slate-400" aria-label="Close">✕</button>
@@ -86,7 +89,7 @@ const LinkPicker: React.FC<{
       />
       <ul className="max-h-[45vh] overflow-y-auto divide-y divide-slate-100 border border-slate-100 rounded-lg">
         {matches.slice(0, MAX_SHOWN).map(p => {
-          const size = [p.unitSize, p.measuringUnit].filter(Boolean).join(' ');
+          const size = productSizeLabel(p);
           const isPicked = picked.includes(p.id);
           return (
             <li key={p.id}>
@@ -94,7 +97,7 @@ const LinkPicker: React.FC<{
                 <input type="checkbox" className="mt-0.5 shrink-0" style={{ minHeight: 0 }} checked={isPicked} onChange={() => toggle(p.id)} />
                 <span className="min-w-0">
                   <span className="block text-sm font-bold text-slate-900 break-words">{p.title}</span>
-                  <span className="block text-[11px] text-slate-500 font-bold">{categoryFullName(categoryOf(p, categories)) || p.category}{size ? ` · ${size}` : ''}</span>
+                  <span className="block text-[11px] text-slate-500 font-bold">{productCategoryName(p, categories)}{size ? ` · ${size}` : ''}</span>
                 </span>
               </label>
             </li>

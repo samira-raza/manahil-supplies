@@ -5,7 +5,7 @@ import { Brand, BrandActivity, BrandSet, Product } from '../types';
 import { Icons } from '../constants';
 import { db } from '../services/db';
 import { notSavedMessage, errorBoxCls } from '../services/errors';
-import { Modal, ConfirmButtons, ConfirmDialog, ErrorBox, primaryBtn } from '../components/Dialog';
+import { Modal, ConfirmButtons, ConfirmDialog, ErrorBox } from '../components/Dialog';
 import { useFieldErrors, FieldErrors } from '../services/formErrors';
 import FieldMessage from '../components/FieldMessage';
 import {
