@@ -5,6 +5,8 @@ import { UserRole, User } from '../types';
 import { Icons } from '../constants';
 import { db } from '../services/db';
 import { notSavedMessage, errorBoxCls } from '../services/errors';
+import { useFieldErrors } from '../services/formErrors';
+import VendorAccess from '../components/VendorAccess';
 
 const generatePassword = () => {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
@@ -26,6 +28,8 @@ const UserManagement: React.FC = () => {
   const [createdCredentials, setCreatedCredentials] = useState<{ name: string; mobile: string; password: string } | null>(null);
   const [copied, setCopied] = useState(false);
   const [addError, setAddError] = useState('');
+  const [newUserAllVendors, setNewUserAllVendors] = useState(false);
+  const fe = useFieldErrors();
 
   if (!ctx) return null;
   const { users, setUsers, currentUser, vendors } = ctx;
@@ -97,13 +101,13 @@ const UserManagement: React.FC = () => {
 
     // Validate supplier selection for vendor roles
     if ((effectiveRole === UserRole.VENDOR || effectiveRole === UserRole.VENDOR_STAFF) && !isVendor && !newUserVendorId) {
-      alert('Please select a vendor for this account');
+      setAddError('Choose the vendor this account belongs to.');
       return;
     }
 
-    // Validate vendor selection for admin role
-    if (effectiveRole === UserRole.ADMIN && newUserAllowedVendorIds.length === 0) {
-      alert('Please select at least one vendor for this Admin account');
+    // D43: an Admin sees all vendors (including new ones) or only the ticked ones; "only" needs at least one tick
+    if (effectiveRole === UserRole.ADMIN && !newUserAllVendors && newUserAllowedVendorIds.length === 0) {
+      fe.show({ vendorAccess: 'Tick at least one vendor, or choose All vendors, including new ones.' });
       return;
     }
 
@@ -116,7 +120,8 @@ const UserManagement: React.FC = () => {
       password: tempPassword,
       role: effectiveRole,
       vendorId: isVendor ? currentUser?.vendorId : newUserVendorId || undefined,
-      allowedVendorIds: effectiveRole === UserRole.ADMIN ? newUserAllowedVendorIds : undefined,
+      // An empty list means "All vendors, including new ones" (App.tsx visibleVendors applies no limit)
+      allowedVendorIds: effectiveRole === UserRole.ADMIN ? (newUserAllVendors ? [] : newUserAllowedVendorIds) : undefined,
       mustResetPassword: true
     };
 
@@ -134,6 +139,8 @@ const UserManagement: React.FC = () => {
     setNewUserRole('');
     setNewUserVendorId('');
     setNewUserAllowedVendorIds([]);
+    setNewUserAllVendors(false);
+    fe.reset();
     setShowAddModal(false);
   };
 
@@ -268,7 +275,7 @@ const UserManagement: React.FC = () => {
                     <label className="block text-sm font-medium text-slate-700 mb-2">Role</label>
                     <select
                       value={newUserRole}
-                      onChange={(e) => { setNewUserRole(e.target.value as UserRole); setNewUserAllowedVendorIds([]); setNewUserVendorId(''); setVendorSelectKey(k => k + 1); }}
+                      onChange={(e) => { setNewUserRole(e.target.value as UserRole); setNewUserAllowedVendorIds([]); setNewUserAllVendors(false); fe.reset(); setNewUserVendorId(''); setVendorSelectKey(k => k + 1); }}
                       className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
                     >
                       <option value="">Select a role</option>
@@ -281,41 +288,14 @@ const UserManagement: React.FC = () => {
 
                 {newUserRole === UserRole.ADMIN && (
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-2">Allowed Vendors*</label>
-                    {newUserAllowedVendorIds.length > 0 && (
-                      <div className="flex flex-wrap gap-2 mb-3">
-                        {newUserAllowedVendorIds.map(vid => {
-                          const v = vendors.find(s => s.id === vid);
-                          return v ? (
-                            <span key={vid} className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold">
-                              {v.name}
-                              <button type="button" onClick={() => setNewUserAllowedVendorIds(prev => prev.filter(x => x !== vid))} className="hover:text-red-500 transition-colors">
-                                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
-                              </button>
-                            </span>
-                          ) : null;
-                        })}
-                      </div>
-                    )}
-                    <select
-                      key={vendorSelectKey}
-                      value=""
-                      onChange={(e) => {
-                        if (e.target.value && !newUserAllowedVendorIds.includes(e.target.value)) {
-                          setNewUserAllowedVendorIds(prev => [...prev, e.target.value]);
-                          setVendorSelectKey(k => k + 1);
-                        }
-                      }}
-                      className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
-                    >
-                      <option value="">+ Add vendor access</option>
-                      {vendors.filter(v => !newUserAllowedVendorIds.includes(v.id)).map(v => (
-                        <option key={v.id} value={v.id}>{v.name}</option>
-                      ))}
-                    </select>
-                    {newUserAllowedVendorIds.length === 0 && (
-                      <p className="text-xs text-red-500 mt-1">At least one vendor must be selected</p>
-                    )}
+                    <label className="block text-sm font-medium text-slate-700 mb-2">Vendor access*</label>
+                    <VendorAccess
+                      all={newUserAllVendors}
+                      ids={newUserAllowedVendorIds}
+                      vendors={vendors}
+                      onChange={(all, ids) => { setNewUserAllVendors(all); setNewUserAllowedVendorIds(ids); fe.clear('vendorAccess'); }}
+                      error={fe.errors.vendorAccess}
+                    />
                   </div>
                 )}
 
@@ -444,6 +424,13 @@ const UserManagement: React.FC = () => {
             setUsers(prev => prev.map(u => u.id === updatedUser.id ? updatedUser : u));
             setViewingUser(updatedUser);
           }}
+          onSaveAccess={async (updatedUser) => {
+            const { error } = await db.upsertUser(updatedUser);
+            if (error) return notSavedMessage(error, 'The vendor access');
+            setUsers(prev => prev.map(u => u.id === updatedUser.id ? updatedUser : u));
+            setViewingUser(updatedUser);
+            return '';
+          }}
         />
       )}
     </div>
@@ -458,13 +445,34 @@ const UserDetailsModal: React.FC<{
   formatRoleName: (role: UserRole) => string;
   onClose: () => void;
   onToggleActive: (updated: User) => void;
-}> = ({ user, vendors, currentUser, getRoleBadgeColor, formatRoleName, onClose, onToggleActive }) => {
+  onSaveAccess: (updated: User) => Promise<string>;
+}> = ({ user, vendors, currentUser, getRoleBadgeColor, formatRoleName, onClose, onToggleActive, onSaveAccess }) => {
   const userVendor = vendors.find(v => v.id === user.vendorId);
   const allowedVendors = (user.allowedVendorIds || []).map(id => vendors.find(v => v.id === id)).filter(Boolean);
   const isActive = user.isActive !== false;
   const isSelf = currentUser?.id === user.id;
   const canToggle = !isSelf && currentUser?.role === UserRole.SUPER_ADMIN;
   const canSetPermissions = currentUser?.role === UserRole.SUPER_ADMIN;
+  // D43: an empty list means "All vendors, including new ones"
+  const hasAllVendors = !user.allowedVendorIds || user.allowedVendorIds.length === 0;
+  const [editingAccess, setEditingAccess] = useState(false);
+  const [accessAll, setAccessAll] = useState(hasAllVendors);
+  const [accessIds, setAccessIds] = useState<string[]>(user.allowedVendorIds || []);
+  const [accessError, setAccessError] = useState('');
+  const [accessSaveError, setAccessSaveError] = useState('');
+  const [accessSaving, setAccessSaving] = useState(false);
+  const startEditAccess = () => { setAccessAll(hasAllVendors); setAccessIds(user.allowedVendorIds || []); setAccessError(''); setAccessSaveError(''); setEditingAccess(true); };
+  const saveAccess = async () => {
+    if (!accessAll && accessIds.length === 0) {
+      setAccessError('Tick at least one vendor, or choose All vendors, including new ones.');
+      requestAnimationFrame(() => (document.querySelector('[data-field="vendorAccess"]') as HTMLElement | null)?.focus());
+      return;
+    }
+    setAccessSaving(true);
+    const failed = await onSaveAccess({ ...user, allowedVendorIds: accessAll ? [] : accessIds });
+    setAccessSaving(false);
+    if (failed) setAccessSaveError(failed); else setEditingAccess(false);
+  };
 
   return (
     <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-50 flex items-center justify-center p-2 md:p-4">
@@ -557,7 +565,38 @@ const UserDetailsModal: React.FC<{
             </div>
           )}
 
-          {allowedVendors.length > 0 && (
+          {user.role === UserRole.ADMIN && (
+            <div className="bg-slate-50 rounded-2xl p-5 border border-slate-100 space-y-3">
+              <div className="flex justify-between items-center gap-3">
+                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Vendor access</div>
+                {canSetPermissions && !editingAccess && (
+                  <button type="button" onClick={startEditAccess} className="text-[10px] font-black text-indigo-600 hover:underline uppercase tracking-widest">Change</button>
+                )}
+              </div>
+              {!editingAccess && (hasAllVendors
+                ? <p className="text-sm font-bold text-slate-900">All vendors, including new ones</p>
+                : (
+                  <div className="flex flex-wrap gap-2">
+                    {allowedVendors.map((v: any) => (
+                      <span key={v.id} className="px-3 py-1.5 bg-indigo-100 text-indigo-700 rounded-xl text-xs font-bold">{v.name}</span>
+                    ))}
+                  </div>
+                ))}
+              {editingAccess && (
+                <>
+                  <VendorAccess all={accessAll} ids={accessIds} vendors={vendors}
+                    onChange={(all, ids) => { setAccessAll(all); setAccessIds(ids); setAccessError(''); }} error={accessError} />
+                  {accessSaveError && <div className={errorBoxCls} role="alert">{accessSaveError}</div>}
+                  <div className="flex justify-end gap-2">
+                    <button type="button" onClick={() => setEditingAccess(false)} className="px-4 py-2 rounded-lg font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 text-xs">Cancel</button>
+                    <button type="button" disabled={accessSaving} onClick={saveAccess} className="px-4 py-2 rounded-lg font-black text-white bg-indigo-600 hover:bg-indigo-700 text-xs disabled:opacity-50">{accessSaving ? 'Saving...' : 'Save vendor access'}</button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
+
+          {user.role !== UserRole.ADMIN && allowedVendors.length > 0 && (
             <div className="bg-slate-50 rounded-2xl p-5 border border-slate-100">
               <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">Allowed Vendors</div>
               <div className="flex flex-wrap gap-2">
