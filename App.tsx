@@ -17,6 +17,8 @@ import MeasuringUnits from './pages/MeasuringUnits';
 import BuyerTeam from './pages/BuyerTeam';
 import { supabase } from './services/supabase';
 import { notSavedMessage, errorBoxCls } from './services/errors';
+import { idleExpired, takeIdleSignOutNote, noteIdleSignOut } from './services/idle';
+import IdleLogout from './components/IdleLogout';
 import {
   vendorFromDb, productFromDb, orderFromDb, deliveryFromDb,
   paymentFromDb, userFromDb, buyerFromDb, categoryFromDb, measuringUnitFromDb,
@@ -152,7 +154,13 @@ const useCRMStore = () => {
       }
 
       // Restore logged-in user session from localStorage
-      const savedUserId = localStorage.getItem('packtrack_current_user_id');
+      let savedUserId = localStorage.getItem('packtrack_current_user_id');
+      // A session left unused for more than 2 minutes (e.g. browser closed and reopened later) is not restored
+      if (savedUserId && idleExpired()) {
+        localStorage.removeItem('packtrack_current_user_id');
+        noteIdleSignOut();
+        savedUserId = null;
+      }
       if (savedUserId && usersData) {
         const found = usersData.find((u: any) => u.id === savedUserId);
         if (found) {
@@ -568,6 +576,7 @@ const LoginPage = () => {
   const [mobile, setMobile] = useState('');
   const [password, setPassword] = useState('');
   const [resetUser, setResetUser] = useState<User | null>(null);
+  const [idleNote] = useState(() => takeIdleSignOutNote());
   if (!ctx) return null;
 
   const handleLogin = (e: React.FormEvent) => {
@@ -593,6 +602,11 @@ const LoginPage = () => {
         <div className="w-20 h-20 md:w-24 md:h-24 bg-gradient-to-br from-indigo-600 to-indigo-700 rounded-2xl flex items-center justify-center text-white text-3xl md:text-4xl font-black mx-auto mb-6 shadow-xl shadow-indigo-200">MS</div>
         <h1 className="text-2xl md:text-3xl font-bold mb-2 text-slate-800">Manahil Supplies</h1>
         <p className="text-slate-500 mb-8 text-base">Enter your credentials to login</p>
+        {idleNote && (
+          <div className="mb-6 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm font-bold text-left" role="status">
+            You were signed out because the app wasn't used for 2 minutes. Please log in again.
+          </div>
+        )}
         <div className="mb-4">
           <label className="block text-left text-sm font-semibold text-slate-600 mb-2">Mobile Number</label>
           <input type="tel" value={mobile} onChange={e => setMobile(e.target.value)} className="w-full px-5 py-4 rounded-xl bg-slate-50 border-2 border-slate-200 focus:border-indigo-500 focus:bg-white outline-none text-lg font-semibold text-slate-800 transition-all" placeholder="Enter mobile number" required />
@@ -612,6 +626,7 @@ const LoginPage = () => {
 
 const App: React.FC = () => {
   const store = useCRMStore();
+  const signOutIdle = React.useCallback(() => store.setCurrentUser(null), [store.setCurrentUser]);
 
   if (store.loading) {
     return (
@@ -631,6 +646,7 @@ const App: React.FC = () => {
           <div className={`${errorBoxCls} max-w-3xl w-full shadow-lg pointer-events-auto`}>{store.loadError}</div>
         </div>
       )}
+      {store.currentUser && <IdleLogout onSignOut={signOutIdle} />}
       <HashRouter>
         {!store.currentUser ? <Routes><Route path="*" element={<LoginPage />} /></Routes> : <Layout><Routes>
           <Route path="/" element={<Dashboard />} />
