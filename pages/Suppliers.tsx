@@ -6,6 +6,7 @@ import { UserRole, Vendor, BankAccount, ChallanStatus } from '../types';
 import { deliveryLine } from '../services/pricing';
 import { Icons } from '../constants';
 import { db } from '../services/db';
+import { hasAllVendors } from '../services/permissions';
 
 const Vendors: React.FC = () => {
   const ctx = useContext(CRMContext);
@@ -105,9 +106,9 @@ const Vendors: React.FC = () => {
     setVendors(prev => [...prev, newVendor]);
     // D43: an Admin limited to "Only these vendors" gets the supplier they just added on their own list,
     // so it doesn't disappear for them ("All vendors" Admins see it anyway)
-    if (isAdmin && currentUser && currentUser.allowedVendorIds && currentUser.allowedVendorIds.length > 0) {
-      const me = { ...currentUser, allowedVendorIds: [...currentUser.allowedVendorIds, newVendor.id] };
-      const { error: accessError } = await db.upsertUser(me);
+    if (isAdmin && currentUser && !hasAllVendors(currentUser)) {
+      const me = { ...currentUser, allowedVendorIds: [...currentUser.allowedVendorIds!, newVendor.id] };
+      const { error: accessError } = await db.setAllowedVendors(me.id, me.allowedVendorIds);
       if (accessError) {
         alert(`${newVendor.name} was saved, but it could not be added to your vendor list. Ask the Super Admin to add it. (Details: ${accessError.message})`);
       } else {

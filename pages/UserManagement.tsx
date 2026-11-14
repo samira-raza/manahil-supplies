@@ -6,7 +6,8 @@ import { Icons } from '../constants';
 import { db } from '../services/db';
 import { notSavedMessage, errorBoxCls } from '../services/errors';
 import { useFieldErrors } from '../services/formErrors';
-import VendorAccess from '../components/VendorAccess';
+import VendorAccess, { vendorAccessError } from '../components/VendorAccess';
+import { hasAllVendors as allVendorsFor } from '../services/permissions';
 import { ErrorBox } from '../components/Dialog';
 
 const generatePassword = () => {
@@ -24,7 +25,6 @@ const UserManagement: React.FC = () => {
   const [newUserRole, setNewUserRole] = useState<UserRole | ''>('');
   const [newUserVendorId, setNewUserVendorId] = useState('');
   const [newUserAllowedVendorIds, setNewUserAllowedVendorIds] = useState<string[]>([]);
-  const [vendorSelectKey, setVendorSelectKey] = useState(0);
   const [viewingUser, setViewingUser] = useState<User | null>(null);
   const [createdCredentials, setCreatedCredentials] = useState<{ name: string; mobile: string; password: string } | null>(null);
   const [copied, setCopied] = useState(false);
@@ -107,10 +107,8 @@ const UserManagement: React.FC = () => {
     }
 
     // D43: an Admin sees all vendors (including new ones) or only the ticked ones; "only" needs at least one tick
-    if (effectiveRole === UserRole.ADMIN && !newUserAllVendors && newUserAllowedVendorIds.length === 0) {
-      fe.show({ vendorAccess: 'Tick at least one vendor, or choose All vendors, including new ones.' });
-      return;
-    }
+    const accessMsg = effectiveRole === UserRole.ADMIN ? vendorAccessError(newUserAllVendors, newUserAllowedVendorIds) : '';
+    if (fe.show(accessMsg ? { vendorAccess: accessMsg } : {})) return;
 
     const tempPassword = generatePassword();
 
@@ -276,7 +274,7 @@ const UserManagement: React.FC = () => {
                     <label className="block text-sm font-medium text-slate-700 mb-2">Role</label>
                     <select
                       value={newUserRole}
-                      onChange={(e) => { setNewUserRole(e.target.value as UserRole); setNewUserAllowedVendorIds([]); setNewUserAllVendors(false); fe.reset(); setNewUserVendorId(''); setVendorSelectKey(k => k + 1); }}
+                      onChange={(e) => { setNewUserRole(e.target.value as UserRole); setNewUserAllowedVendorIds([]); setNewUserAllVendors(false); fe.reset(); setNewUserVendorId(''); }}
                       className="w-full px-4 py-3 rounded-xl border border-slate-300 focus:ring-2 focus:ring-indigo-500 outline-none bg-white"
                     >
                       <option value="">Select a role</option>
@@ -455,20 +453,17 @@ const UserDetailsModal: React.FC<{
   const canToggle = !isSelf && currentUser?.role === UserRole.SUPER_ADMIN;
   const canSetPermissions = currentUser?.role === UserRole.SUPER_ADMIN;
   // D43: an empty list means "All vendors, including new ones"
-  const hasAllVendors = !user.allowedVendorIds || user.allowedVendorIds.length === 0;
+  const hasAllVendors = allVendorsFor(user);
+  const accessFe = useFieldErrors();
   const [editingAccess, setEditingAccess] = useState(false);
   const [accessAll, setAccessAll] = useState(hasAllVendors);
   const [accessIds, setAccessIds] = useState<string[]>(user.allowedVendorIds || []);
-  const [accessError, setAccessError] = useState('');
   const [accessSaveError, setAccessSaveError] = useState('');
   const [accessSaving, setAccessSaving] = useState(false);
-  const startEditAccess = () => { setAccessAll(hasAllVendors); setAccessIds(user.allowedVendorIds || []); setAccessError(''); setAccessSaveError(''); setEditingAccess(true); };
+  const startEditAccess = () => { setAccessAll(hasAllVendors); setAccessIds(user.allowedVendorIds || []); accessFe.reset(); setAccessSaveError(''); setEditingAccess(true); };
   const saveAccess = async () => {
-    if (!accessAll && accessIds.length === 0) {
-      setAccessError('Tick at least one vendor, or choose All vendors, including new ones.');
-      requestAnimationFrame(() => (document.querySelector('[data-field="vendorAccess"]') as HTMLElement | null)?.focus());
-      return;
-    }
+    const accessMsg = vendorAccessError(accessAll, accessIds);
+    if (accessFe.show(accessMsg ? { vendorAccess: accessMsg } : {})) return;
     setAccessSaving(true);
     const failed = await onSaveAccess({ ...user, allowedVendorIds: accessAll ? [] : accessIds });
     setAccessSaving(false);
@@ -587,7 +582,7 @@ const UserDetailsModal: React.FC<{
               {editingAccess && (
                 <>
                   <VendorAccess all={accessAll} ids={accessIds} vendors={vendors}
-                    onChange={(all, ids) => { setAccessAll(all); setAccessIds(ids); setAccessError(''); }} error={accessError} />
+                    onChange={(all, ids) => { setAccessAll(all); setAccessIds(ids); accessFe.clear('vendorAccess'); }} error={accessFe.errors.vendorAccess} />
                   <ErrorBox msg={accessSaveError} />
                   <div className="flex justify-end gap-2">
                     <button type="button" onClick={() => setEditingAccess(false)} className="px-4 py-2 rounded-lg font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 text-xs">Cancel</button>

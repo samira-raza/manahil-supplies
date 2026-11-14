@@ -5,6 +5,10 @@ import FieldMessage from './FieldMessage';
 // or "Only these vendors" with tick boxes. "All vendors" is stored as an empty list, which the app
 // already treats as "no limit" (App.tsx visibleVendors), so suppliers added later are included.
 
+// The one rule both Add User and the Admin's details check
+export const vendorAccessError = (all: boolean, ids: string[]) =>
+  !all && ids.length === 0 ? 'Tick at least one vendor, or choose All vendors, including new ones.' : '';
+
 const VendorAccess: React.FC<{
   all: boolean;
   ids: string[];
