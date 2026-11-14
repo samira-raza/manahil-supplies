@@ -93,6 +93,8 @@ export const productFromDb = (row: any, supplierRows: any[] = [], priceRows: any
     description: row.description,
     unitSize: row.unit_size,
     packing: row.packing,
+    itemCapacity: row.item_capacity === null || row.item_capacity === undefined ? undefined : Number(row.item_capacity),
+    itemCapacityUnit: row.item_capacity_unit || undefined,
     suppliers: own.length > 0 ? own.map(s => productSupplierFromDb(s, priceRows)) : legacySuppliers(row),
     activity: activityRows
       .filter(a => a.product_id === row.id)
@@ -134,6 +136,8 @@ export const productToDb = (p: Product) => {
     description: p.description,
     unit_size: p.unitSize,
     packing: p.packing,
+    item_capacity: p.itemCapacity ?? null,
+    item_capacity_unit: p.itemCapacityUnit || null,
     primary_vendor_id: main?.vendorId || null,
     primary_price: priceOn(main),
     secondary_vendor_id: second?.vendorId || null,

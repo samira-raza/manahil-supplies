@@ -22,6 +22,13 @@ export const setText = (set: BrandSet, brands: Brand[]) =>
   entryText(brands.find(b => b.id === set.parentId)?.name || '', setChildNames(set, brands));
 
 // Product name = Category + Parent brand + [child brands A-Z] + Item name + Packing
+// D42: the end of the name, "30 ML X 26 Bottles"; the X only when both parts are filled
+export const contentsPart = (capacity?: number | string, unit?: string, packing?: string) =>
+  [capacity !== undefined && capacity !== null && String(capacity).trim() !== '' ? `${String(capacity).trim()} ${unit || ''}`.trim() : '', (packing || '').trim()]
+    .filter(Boolean)
+    .join(' X ');
+
+// Name = Category word + Parent brand + [child brands] + Item name + contents (D37, D42)
 export const buildProductTitle = (category: string, parentName: string, childNames: string[], itemName: string, packing: string) =>
   [category, parentName ? entryText(parentName, childNames) : '', itemName, packing]
     .map(s => (s || '').trim())
@@ -41,9 +48,9 @@ export const productBrandParts = (p: Pick<Product, 'brandParentId' | 'brandSetId
   };
 };
 
-export const productTitleFor = (p: Pick<Product, 'brandParentId' | 'brandSetId' | 'brand' | 'category' | 'itemName' | 'packing'>, brands: Brand[], sets: BrandSet[]) => {
+export const productTitleFor = (p: Pick<Product, 'brandParentId' | 'brandSetId' | 'brand' | 'category' | 'itemName' | 'packing' | 'itemCapacity' | 'itemCapacityUnit'>, brands: Brand[], sets: BrandSet[]) => {
   const parts = productBrandParts(p, brands, sets);
-  return buildProductTitle(p.category, parts.parentName, parts.childNames, p.itemName, p.packing);
+  return buildProductTitle(p.category, parts.parentName, parts.childNames, p.itemName, contentsPart(p.itemCapacity, p.itemCapacityUnit, p.packing));
 };
 
 // Names of the disabled brands on a product: its parent, its set, or any child in the set

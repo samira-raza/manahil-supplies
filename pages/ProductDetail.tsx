@@ -4,7 +4,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { CRMContext, generateId } from '../App';
 import { Icons } from '../constants';
 import { Brand, BrandSet, Category, Product, ProductActivity, ProductActivityType, ProductPrice, ProductSupplier, UserRole } from '../types';
-import { buildProductTitle, disabledBrandNames, entryText, productBrandParts } from '../services/brands';
+import { buildProductTitle, contentsPart, disabledBrandNames, entryText, productBrandParts } from '../services/brands';
 import { db } from '../services/db';
 import { notSavedMessage, errorBoxCls } from '../services/errors';
 import { useFieldErrors, FieldErrors } from '../services/formErrors';
@@ -751,9 +751,11 @@ const MetadataModal: React.FC<{
     unitSize: product.unitSize,
     measuringUnit: product.measuringUnit || '',
     packing: product.packing,
+    itemCapacity: product.itemCapacity !== undefined && product.itemCapacity !== null ? String(product.itemCapacity) : '',
+    itemCapacityUnit: product.itemCapacityUnit || '',
   });
   const generatedTitle = useMemo(() => {
-    return buildProductTitle(formData.category, brandParts.parentName, brandParts.childNames, formData.itemName, formData.packing);
+    return buildProductTitle(formData.category, brandParts.parentName, brandParts.childNames, formData.itemName, contentsPart(formData.itemCapacity, formData.itemCapacityUnit, formData.packing));
   }, [formData, brandParts.parentName, brandParts.childNames.join(',')]);
 
   const isDirty = useMemo(() => {
@@ -764,7 +766,9 @@ const MetadataModal: React.FC<{
       formData.description !== (product.description || '') ||
       formData.unitSize !== product.unitSize ||
       formData.measuringUnit !== (product.measuringUnit || '') ||
-      formData.packing !== product.packing
+      formData.packing !== product.packing ||
+      formData.itemCapacity !== (product.itemCapacity !== undefined && product.itemCapacity !== null ? String(product.itemCapacity) : '') ||
+      formData.itemCapacityUnit !== (product.itemCapacityUnit || '')
     );
     return fieldChanged;
   }, [formData]);
@@ -785,10 +789,23 @@ const MetadataModal: React.FC<{
       const sameName = products.find((p: any) => p.id !== product.id && p.title.trim().toLowerCase() === generatedTitle.trim().toLowerCase());
       if (sameName) errs.itemName = `Another product already has this name: "${sameName.title}". Change the item name, e.g. add "Large".`;
     }
-    if (!(formData.unitSize || '').trim()) errs.unitSize = 'Enter the unit size.';
+    // D42: size is optional; a capacity must be a number above 0 and needs its unit
+    if (formData.itemCapacity.trim() !== '') {
+      const cap = parseFloat(formData.itemCapacity);
+      if (isNaN(cap) || cap <= 0) errs.itemCapacity = 'Enter a capacity above 0, e.g. 30.';
+      else if (!formData.itemCapacityUnit) errs.itemCapacityUnit = 'Choose the unit, e.g. ML.';
+    }
     if (fe.show(errs)) return;
     // Linked products are managed on the product page, not here
-    onSave({ ...formData, title: generatedTitle, categoryId: categories.find(c => c.name === formData.category)?.id });
+    const hasCapacity = formData.itemCapacity.trim() !== '';
+    onSave({
+      ...formData,
+      // D42: stored as a number, or nothing when left empty
+      itemCapacity: hasCapacity ? parseFloat(formData.itemCapacity) : undefined,
+      itemCapacityUnit: hasCapacity ? formData.itemCapacityUnit : undefined,
+      title: generatedTitle,
+      categoryId: categories.find(c => c.name === formData.category)?.id,
+    });
   };
 
   return (
@@ -839,9 +856,9 @@ const MetadataModal: React.FC<{
               <input name="description" value={formData.description} onChange={handleChange} type="text" className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm" />
             </div>
             <div>
-              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Unit Size*</label>
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Size (L × W × H)</label>
               <div className="flex gap-2">
-                <input name="unitSize" value={formData.unitSize} onChange={handleChange} type="text" {...fe.field('unitSize', "flex-1 min-w-0 px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm")} placeholder="e.g. 60x40x40" />
+                <input name="unitSize" value={formData.unitSize} onChange={handleChange} type="text" {...fe.field('unitSize', "flex-1 min-w-0 px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm")} placeholder="Optional, e.g. 11 x 11.5 x 13" />
                 <select name="measuringUnit" value={formData.measuringUnit} onChange={handleChange} className="w-20 md:w-24 px-2 md:px-3 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm">
                   <option value="">Unit</option>
                   {measuringUnits.map((u: any) => (
@@ -852,8 +869,21 @@ const MetadataModal: React.FC<{
               <FieldMessage msg={fe.errors.unitSize} />
             </div>
             <div>
+              <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Item capacity</label>
+              <div className="flex gap-2">
+                <input name="itemCapacity" value={formData.itemCapacity} onChange={handleChange} type="number" step="any" min="0" {...fe.field('itemCapacity', "flex-1 min-w-0 px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm")} placeholder="Optional, e.g. 30" />
+                <select name="itemCapacityUnit" value={formData.itemCapacityUnit} onChange={handleChange} {...fe.field('itemCapacityUnit', "w-20 md:w-24 px-2 md:px-3 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm")}>
+                  <option value="">Unit</option>
+                  {measuringUnits.map((u: any) => (
+                    <option key={u.id} value={u.symbol}>{u.symbol}</option>
+                  ))}
+                </select>
+              </div>
+              <FieldMessage msg={fe.errors.itemCapacity || fe.errors.itemCapacityUnit} />
+            </div>
+            <div>
               <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Packing</label>
-              <input name="packing" value={formData.packing} onChange={handleChange} type="text" className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm" placeholder="Optional, e.g. Bundle of 20" />
+              <input name="packing" value={formData.packing} onChange={handleChange} type="text" className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm" placeholder="Optional, e.g. 26 Pcs or 24 Bottles" />
             </div>
           </div>
 
