@@ -6,6 +6,8 @@ import { Icons } from '../constants';
 import { db } from '../services/db';
 import { productTitleFor } from '../services/brands';
 import { notSavedMessage, errorBoxCls } from '../services/errors';
+import { useFieldErrors, FieldErrors } from '../services/formErrors';
+import FieldMessage from '../components/FieldMessage';
 import {
   categoryFullName, sortCategories, productsInCategory, suggestShortCode, defaultShortCode, validShortCode, categoryPermissions,
 } from '../services/categories';
@@ -331,6 +333,7 @@ const CategoryDialog: React.FC<{
   const [wordEdited, setWordEdited] = useState(!isNew);
   const [codeEdited, setCodeEdited] = useState(!isNew);
   const [error, setError] = useState('');
+  const fe = useFieldErrors();
 
   const takenCodes = others.map(c => c.shortCode || '').filter(Boolean);
   const codeHolder = others.find(c => c.shortCode && c.shortCode === shortCode);
@@ -349,14 +352,17 @@ const CategoryDialog: React.FC<{
   const save = async () => {
     setError('');
     const f = fullName.trim(), w = word.trim();
-    if (!f) return setError('Please enter the full name.');
-    if (!w) return setError('Please enter the word used in product names.');
-    if (fullNameClash) return setError(`Another category is already called "${categoryFullName(fullNameClash)}".`);
-    if (wordClash) return setError(`"${wordClash.name}" is already the word for ${categoryFullName(wordClash)}.`);
+    // D39: outline each field that blocks saving and move the cursor to the first
+    const errs: FieldErrors = {};
+    if (!f) errs.fullName = 'Enter the full name.';
+    else if (fullNameClash) errs.fullName = `Another category is already called "${categoryFullName(fullNameClash)}".`;
+    if (!w) errs.word = 'Enter the word used in product names.';
+    else if (wordClash) errs.word = `"${wordClash.name}" is already the word for ${categoryFullName(wordClash)}.`;
     if (canCode) {
-      if (!validShortCode(shortCode)) return setError('The short code must be 2 or 3 capital letters.');
-      if (codeHolder) return setError(`Short code ${shortCode} is already used by ${categoryFullName(codeHolder)}.`);
+      if (!validShortCode(shortCode)) errs.shortCode = 'The short code must be 2 or 3 capital letters.';
+      else if (codeHolder) errs.shortCode = `Short code ${shortCode} is already used by ${categoryFullName(codeHolder)}.`;
     }
+    if (fe.show(errs)) return;
     const failed = await onSave({ fullName: f, word: w, shortCode, description: description.trim() });
     if (failed) setError(failed);
   };
@@ -368,12 +374,14 @@ const CategoryDialog: React.FC<{
     <Modal title={isNew ? 'Add Category' : `Edit ${categoryFullName(category)}`} subtitle={isNew ? 'e.g. Master Carton' : `${productCount} product${productCount === 1 ? '' : 's'} in this category`} onClose={onClose}>
       <div>
         <label className={labelCls}>Full name*</label>
-        <input className={inputCls} value={fullName} onChange={e => onFullName(e.target.value)} placeholder="e.g. Master Carton" autoFocus={isNew} />
+        <input {...fe.field('fullName', inputCls)} value={fullName} onChange={e => onFullName(e.target.value)} placeholder="e.g. Master Carton" autoFocus={isNew} />
+        <FieldMessage msg={fe.errors.fullName} />
         <p className="text-[11px] text-slate-400 mt-1">Shown in lists and filters. Changing it never changes product names.</p>
       </div>
       <div>
         <label className={labelCls}>Word in product names*</label>
-        <input className={inputCls} value={word} disabled={!canWord} onChange={e => { setWordEdited(true); setWord(e.target.value); }} placeholder="e.g. MTCN or Tray" />
+        <input {...fe.field('word', inputCls)} value={word} disabled={!canWord} onChange={e => { setWordEdited(true); setWord(e.target.value); }} placeholder="e.g. MTCN or Tray" />
+        <FieldMessage msg={fe.errors.word} />
         <p className="text-[11px] text-slate-400 mt-1">
           The first word of every product name: the full word (Tray) or a short form (MTCN).
           {!isNew && (canWord
@@ -383,10 +391,12 @@ const CategoryDialog: React.FC<{
       </div>
       <div>
         <label className={labelCls}>Short code* (2 or 3 capital letters, used in product codes)</label>
-        <input className={inputCls} value={shortCode} maxLength={3} disabled={!canCode}
+        <input {...fe.field('shortCode', inputCls)} value={shortCode} maxLength={3} disabled={!canCode}
           onChange={e => { setCodeEdited(true); setShortCode(e.target.value.toUpperCase().replace(/[^A-Z]/g, '')); }} placeholder="e.g. MC" />
         {usualHolder && <p className="text-xs text-amber-700 font-bold mt-1">{usual} is already used by {categoryFullName(usualHolder)}. {shortCode && !codeHolder ? `Suggested: ${shortCode}.` : ''}</p>}
-        {codeHolder && <p className="text-xs text-red-600 font-bold mt-1">{shortCode} is already used by {categoryFullName(codeHolder)}.</p>}
+        {fe.errors.shortCode
+          ? <FieldMessage msg={fe.errors.shortCode} />
+          : codeHolder && <p className="text-xs text-red-600 font-bold mt-1">{shortCode} is already used by {categoryFullName(codeHolder)}.</p>}
         <p className="text-[11px] text-slate-400 mt-1">
           {isNew ? 'Suggested from the full name. You can change it now. ' : ''}
           {!canCode ? 'Only the Super Admin can change it. ' : ''}
