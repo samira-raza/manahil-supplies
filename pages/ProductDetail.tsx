@@ -4,7 +4,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { CRMContext, generateId } from '../App';
 import { Icons } from '../constants';
 import { Brand, BrandSet, Category, Product, ProductActivity, ProductActivityType, ProductPrice, ProductSupplier, UserRole } from '../types';
-import { buildProductTitle, contentsPart, disabledBrandNames, entryText, productBrandParts } from '../services/brands';
+import { buildProductTitle, capacityText, capacityErrors, readCapacity, disabledBrandNames, entryText, productBrandParts } from '../services/brands';
 import { db } from '../services/db';
 import { notSavedMessage, errorBoxCls } from '../services/errors';
 import { useFieldErrors, FieldErrors } from '../services/formErrors';
@@ -754,11 +754,11 @@ const MetadataModal: React.FC<{
     unitSize: product.unitSize,
     measuringUnit: product.measuringUnit || '',
     packing: product.packing,
-    itemCapacity: product.itemCapacity !== undefined && product.itemCapacity !== null ? String(product.itemCapacity) : '',
+    itemCapacity: capacityText(product.itemCapacity),
     itemCapacityUnit: product.itemCapacityUnit || '',
   });
   const generatedTitle = useMemo(() => {
-    return buildProductTitle(formData.category, brandParts.parentName, brandParts.childNames, formData.itemName, contentsPart(formData.itemCapacity, formData.itemCapacityUnit, formData.packing));
+    return buildProductTitle(formData.category, brandParts.parentName, brandParts.childNames, formData.itemName, formData);
   }, [formData, brandParts.parentName, brandParts.childNames.join(',')]);
 
   const isDirty = useMemo(() => {
@@ -770,7 +770,7 @@ const MetadataModal: React.FC<{
       formData.unitSize !== product.unitSize ||
       formData.measuringUnit !== (product.measuringUnit || '') ||
       formData.packing !== product.packing ||
-      formData.itemCapacity !== (product.itemCapacity !== undefined && product.itemCapacity !== null ? String(product.itemCapacity) : '') ||
+      formData.itemCapacity !== capacityText(product.itemCapacity) ||
       formData.itemCapacityUnit !== (product.itemCapacityUnit || '')
     );
     return fieldChanged;
@@ -793,19 +793,13 @@ const MetadataModal: React.FC<{
       if (sameName) errs.itemName = `Another product already has this name: "${sameName.title}". Change the item name, e.g. add "Large".`;
     }
     // D42: size is optional; a capacity must be a number above 0 and needs its unit
-    if (formData.itemCapacity.trim() !== '') {
-      const cap = parseFloat(formData.itemCapacity);
-      if (isNaN(cap) || cap <= 0) errs.itemCapacity = 'Enter a capacity above 0, e.g. 30.';
-      else if (!formData.itemCapacityUnit) errs.itemCapacityUnit = 'Choose the unit, e.g. ML.';
-    }
+    Object.assign(errs, capacityErrors(formData.itemCapacity, formData.itemCapacityUnit));
     if (fe.show(errs)) return;
     // Linked products are managed on the product page, not here
-    const hasCapacity = formData.itemCapacity.trim() !== '';
     onSave({
       ...formData,
       // D42: stored as a number, or nothing when left empty
-      itemCapacity: hasCapacity ? parseFloat(formData.itemCapacity) : undefined,
-      itemCapacityUnit: hasCapacity ? formData.itemCapacityUnit : undefined,
+      ...readCapacity(formData.itemCapacity, formData.itemCapacityUnit),
       title: generatedTitle,
       categoryId: categories.find(c => c.name === formData.category)?.id,
     });

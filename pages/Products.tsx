@@ -7,7 +7,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { db } from '../services/db';
 import { localToday, mainSupplier, activeSuppliers, orderedSuppliers, priceOn, sortPrices, hasSupplier, deliveryLine } from '../services/pricing';
 import { productPermissions } from '../services/permissions';
-import { brandEntries, entryKey, entryText, buildProductTitle, contentsPart, productBrandParts, setChildNames, parentBrands, childBrandsOf } from '../services/brands';
+import { brandEntries, entryKey, entryText, buildProductTitle, contentsPart, capacityText, capacityErrors, readCapacity, productBrandParts, setChildNames, parentBrands, childBrandsOf } from '../services/brands';
 import { sortCategories, categoryLabel } from '../services/categories';
 import { useFieldErrors, FieldErrors } from '../services/formErrors';
 import FieldMessage from '../components/FieldMessage';
@@ -74,7 +74,7 @@ const Products: React.FC = () => {
     const { parentId, setId } = splitEntry(formData.brand);
     const parentName = ctx?.brands.find(b => b.id === parentId)?.name || '';
     const childNames = setChildNames(ctx?.brandSets.find(s => s.id === setId), ctx?.brands || []);
-    return buildProductTitle(formData.category, parentName, childNames, formData.itemName, contentsPart(formData.itemCapacity, formData.itemCapacityUnit, formData.packing));
+    return buildProductTitle(formData.category, parentName, childNames, formData.itemName, formData);
   }, [formData, ctx?.brands, ctx?.brandSets]);
 
   useEffect(() => {
@@ -101,7 +101,7 @@ const Products: React.FC = () => {
       unitSize: original.unitSize || '',
       measuringUnit: original.measuringUnit || '',
       packing: original.packing || '',
-      itemCapacity: original.itemCapacity !== undefined ? String(original.itemCapacity) : '',
+      itemCapacity: capacityText(original.itemCapacity),
       itemCapacityUnit: original.itemCapacityUnit || '',
       relatedProductId: '',
     });
@@ -209,11 +209,7 @@ const Products: React.FC = () => {
       if (sameName) errs.itemName = `Another product already has this name: "${sameName.title}". Change the item name, e.g. add "Large".`;
     }
     // D42: size is optional; a capacity must be a number above 0 and needs its unit
-    if (formData.itemCapacity.trim() !== '') {
-      const cap = parseFloat(formData.itemCapacity);
-      if (isNaN(cap) || cap <= 0) errs.itemCapacity = 'Enter a capacity above 0, e.g. 30.';
-      else if (!formData.itemCapacityUnit) errs.itemCapacityUnit = 'Choose the unit, e.g. ML.';
-    }
+    Object.assign(errs, capacityErrors(formData.itemCapacity, formData.itemCapacityUnit));
     if (duplicateOf && !whatsDifferent.trim()) errs.whatsDifferent = "Write what's different from the original.";
     const drafts = supplierDrafts.filter(d => d.vendorId);
     if (drafts.length === 0) {
@@ -253,7 +249,7 @@ const Products: React.FC = () => {
         formData.unitSize !== (duplicateOf.unitSize || '') ||
         formData.measuringUnit !== (duplicateOf.measuringUnit || '') ||
         formData.packing !== (duplicateOf.packing || '') ||
-        formData.itemCapacity !== (duplicateOf.itemCapacity !== undefined ? String(duplicateOf.itemCapacity) : '') ||
+        formData.itemCapacity !== capacityText(duplicateOf.itemCapacity) ||
         formData.itemCapacityUnit !== (duplicateOf.itemCapacityUnit || '');
       const originalVendors = activeSuppliers(duplicateOf).map(s => s.vendorId).sort().join(',');
       const suppliersChanged = drafts.map(d => d.vendorId).sort().join(',') !== originalVendors ||
@@ -309,8 +305,7 @@ const Products: React.FC = () => {
       unitSize: formData.unitSize,
       measuringUnit: formData.measuringUnit,
       packing: formData.packing,
-      itemCapacity: formData.itemCapacity.trim() !== '' ? parseFloat(formData.itemCapacity) : undefined,
-      itemCapacityUnit: formData.itemCapacity.trim() !== '' ? formData.itemCapacityUnit : undefined,
+      ...readCapacity(formData.itemCapacity, formData.itemCapacityUnit),
       suppliers,
       activity: [],
       dateAdded: today,
@@ -530,7 +525,7 @@ const Products: React.FC = () => {
                     <tr className={`group transition-all ${isExpanded ? 'bg-indigo-50/20' : 'hover:bg-slate-50/80'} ${p.isArchived ? 'opacity-50 grayscale' : ''}`}>
                       <td className="px-4 md:px-8 py-4 md:py-6">
                         <Link to={`/products/${p.id}`} className="block hover:text-indigo-600 transition-colors">
-                          <div className="font-black text-slate-900 leading-tight text-sm md:text-base max-w-[200px] md:max-w-md group-hover:text-indigo-600 truncate md:whitespace-normal">{p.itemName || p.title}{contentsPart(p.itemCapacity, p.itemCapacityUnit, p.packing) ? ` - ${contentsPart(p.itemCapacity, p.itemCapacityUnit, p.packing)}` : ''}</div>
+                          <div className="font-black text-slate-900 leading-tight text-sm md:text-base max-w-[200px] md:max-w-md group-hover:text-indigo-600 truncate md:whitespace-normal">{[p.itemName || p.title, contentsPart(p)].filter(Boolean).join(' - ')}</div>
                         </Link>
                         <div className="flex items-center gap-1 md:gap-2 mt-1 md:mt-2 flex-wrap">
                            {(() => {
