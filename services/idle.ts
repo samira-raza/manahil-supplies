@@ -1,8 +1,8 @@
-// Auto sign-out after 2 minutes with no activity (agreed 14 Nov 2026, Login card).
+// Auto sign-out after 10 minutes with no activity (agreed 14 Nov 2026 as 2 minutes; changed to 10 the same day).
 // The last activity time is kept in localStorage so every open tab shares it:
 // working in one tab keeps the others signed in, and a closed browser can't reopen an old session.
 
-export const IDLE_LIMIT_MS = 2 * 60 * 1000;   // sign out after 2 minutes
+export const IDLE_LIMIT_MS = 10 * 60 * 1000;  // sign out after 10 minutes
 export const IDLE_WARNING_MS = 15 * 1000;     // warn 15 seconds before
 
 const LAST_ACTIVE_KEY = 'packtrack_last_activity';
