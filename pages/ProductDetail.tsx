@@ -9,6 +9,7 @@ import { db } from '../services/db';
 import { notSavedMessage, errorBoxCls } from '../services/errors';
 import { useFieldErrors, FieldErrors } from '../services/formErrors';
 import FieldMessage from '../components/FieldMessage';
+import LinkPicker from '../components/LinkPicker';
 import { categoryOf, categoryFullName, categoryLabel, sortCategories } from '../services/categories';
 import { localToday, mainSupplier, activeSuppliers, orderedSuppliers, priceOn, priceRecordOn, sortPrices, supplierOf, hasSupplier } from '../services/pricing';
 import { productPermissions } from '../services/permissions';
@@ -86,6 +87,26 @@ const ProductDetail: React.FC = () => {
     const withLog = logError ? updated : { ...updated, activity: [entry, ...updated.activity] };
     setProducts(prev => prev.map(p => p.id === updated.id ? withLog : p));
     if (logError) setActionError(`The change was saved, but the activity log was not: ${logError.message}`);
+    return withLog;
+  };
+
+  // Links several products in one go (search picker, agreed 14 Nov 2026). Still two-way, and each link
+  // is recorded in both products' history. Returns '' when it worked, or the message for the picker.
+  const linkMany = async (ids: string[]) => {
+    const others = ids.map(id => products.find(p => p.id === id)).filter((p): p is Product => !!p);
+    if (others.length === 0) return '';
+    const res = await db.addProductLinks(product.id, others.map(o => o.id), currentUser?.name);
+    if (res.error) return notSavedMessage(res.error, others.length === 1 ? 'The link' : 'The links', 'added');
+    const mine = [...(product.relatedProductIds || []).filter(x => !ids.includes(x)), ...others.map(o => o.id)];
+    await db.setRelatedMirror(product.id, mine);
+    let me: Product = { ...product, relatedProductIds: mine };
+    for (const other of others) {
+      const theirs = [...(other.relatedProductIds || []).filter(x => x !== product.id), product.id];
+      await db.setRelatedMirror(other.id, theirs);
+      me = await logActivity(me, 'LINK_ADDED', `Linked to "${other.title}"`);
+      await logActivity({ ...other, relatedProductIds: theirs }, 'LINK_ADDED', `Linked to "${product.title}"`);
+    }
+    return '';
   };
 
   // Two-way links: added or removed on both products, and recorded in both products' history
@@ -315,11 +336,8 @@ const ProductDetail: React.FC = () => {
                 No related products linked (e.g. Inner Carton)
               </div>
             )}
-            {can.manageLinks && linkCandidates.length > 0 && (
-              <select value="" onChange={e => { if (e.target.value) changeLink(e.target.value, true); }} className="mt-3 w-full px-4 py-3 rounded-xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-xs">
-                <option value="">+ Link a product</option>
-                {linkCandidates.map(p => <option key={p.id} value={p.id}>{p.title}</option>)}
-              </select>
+            {can.manageLinks && (
+              <LinkPicker candidates={linkCandidates} categories={ctx.categories} onConfirm={linkMany} />
             )}
           </div>
 
