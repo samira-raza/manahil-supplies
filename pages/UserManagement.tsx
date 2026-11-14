@@ -546,6 +546,7 @@ const UserDetailsModal: React.FC<{
               {([
                 ['canCreateProducts', 'Can create products', 'Create and duplicate products'],
                 ['canAddProductSuppliers', 'Can add suppliers to products', 'Add a new supplier to an existing product'],
+                ['canCorrectPrices', 'Can correct prices', 'Correct a price or its start date (deleting prices stays with the Super Admin)'],
               ] as const).map(([key, label, hint]) => (
                 <label key={key} className={`flex items-start gap-3 ${canSetPermissions ? 'cursor-pointer' : ''}`}>
                   <input

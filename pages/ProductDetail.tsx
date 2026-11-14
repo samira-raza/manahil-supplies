@@ -438,10 +438,10 @@ const ProductDetail: React.FC = () => {
                               {(h.note || h.createdBy) && (
                                 <div className="text-[10px] text-slate-400 ml-3.5">{h.note}{h.note && h.createdBy ? ' · ' : ''}{h.createdBy ? `by ${h.createdBy}` : ''}</div>
                               )}
-                              {can.correctPrices && (
+                              {(can.correctPrices || can.deletePrices) && (
                                 <div className="ml-3.5 mt-1 flex gap-3">
-                                  <button className="text-[10px] font-bold text-indigo-600 hover:underline" onClick={() => setPriceDialog({ vendorId: sup.vendorId, edit: h })}>Correct</button>
-                                  <button className="text-[10px] font-bold text-red-500 hover:underline" onClick={() => setDeletePriceDialog({ supplier: sup, price: h })}>Delete</button>
+                                  {can.correctPrices && <button className="text-[10px] font-bold text-indigo-600 hover:underline" onClick={() => setPriceDialog({ vendorId: sup.vendorId, edit: h })}>Correct</button>}
+                                  {can.deletePrices && <button className="text-[10px] font-bold text-red-500 hover:underline" onClick={() => setDeletePriceDialog({ supplier: sup, price: h })}>Delete</button>}
                                 </div>
                               )}
                             </div>
@@ -1014,7 +1014,7 @@ const PriceModal: React.FC<{
   }
 
   return (
-    <ModalShell title={editing ? 'Correct a Price' : 'Add a Price'} subtitle={editing ? 'Super Admin only' : 'New price for one supplier'} onClose={onClose}>
+    <ModalShell title={editing ? 'Correct a Price' : 'Add a Price'} subtitle={editing ? 'The change is recorded in the history' : 'New price for one supplier'} onClose={onClose}>
       <form onSubmit={handleSubmit} noValidate className="space-y-4 md:space-y-6">
         <div>
           <label className={labelCls}>Supplier*</label>

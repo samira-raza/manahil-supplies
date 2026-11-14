@@ -9,7 +9,9 @@ export const productPermissions = (u?: User | null) => ({
   createProducts: isSuperAdmin(u) || (isAdmin(u) && !!u?.canCreateProducts),
   editProductInfo: isSuperAdmin(u),
   addPrices: isSuperAdmin(u) || isAdmin(u),
-  correctPrices: isSuperAdmin(u),
+  // D44 (14 Nov 2026): an Admin with "Can correct prices" may correct, but deleting stays Super Admin only
+  correctPrices: isSuperAdmin(u) || (isAdmin(u) && !!u?.canCorrectPrices),
+  deletePrices: isSuperAdmin(u),
   addSuppliers: isSuperAdmin(u) || (isAdmin(u) && !!u?.canAddProductSuppliers),
   manageSuppliers: isSuperAdmin(u),
   // Agreed 1 Nov 2026: Super Admin and Admin (and later the admin-like user) add and remove links

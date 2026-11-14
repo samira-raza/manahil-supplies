@@ -274,6 +274,7 @@ export const userFromDb = (row: any): User => ({
   mustResetPassword: row.must_reset_password ?? false,
   canCreateProducts: row.can_create_products ?? false,
   canAddProductSuppliers: row.can_add_product_suppliers ?? false,
+  canCorrectPrices: row.can_correct_prices ?? false,
 });
 
 export const userToDb = (u: User) => ({
@@ -288,6 +289,7 @@ export const userToDb = (u: User) => ({
   must_reset_password: u.mustResetPassword ?? false,
   can_create_products: u.canCreateProducts ?? false,
   can_add_product_suppliers: u.canAddProductSuppliers ?? false,
+  can_correct_prices: u.canCorrectPrices ?? false,
 });
 
 // ---- Buyer ----
