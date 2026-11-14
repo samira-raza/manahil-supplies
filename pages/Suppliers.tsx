@@ -103,6 +103,18 @@ const Vendors: React.FC = () => {
       return;
     }
     setVendors(prev => [...prev, newVendor]);
+    // D43: an Admin limited to "Only these vendors" gets the supplier they just added on their own list,
+    // so it doesn't disappear for them ("All vendors" Admins see it anyway)
+    if (isAdmin && currentUser && currentUser.allowedVendorIds && currentUser.allowedVendorIds.length > 0) {
+      const me = { ...currentUser, allowedVendorIds: [...currentUser.allowedVendorIds, newVendor.id] };
+      const { error: accessError } = await db.upsertUser(me);
+      if (accessError) {
+        alert(`${newVendor.name} was saved, but it could not be added to your vendor list. Ask the Super Admin to add it. (Details: ${accessError.message})`);
+      } else {
+        ctx.setUsers(prev => prev.map(u => u.id === me.id ? me : u));
+        ctx.setCurrentUser(me);
+      }
+    }
     setShowAddModal(false);
     resetForm();
   };
