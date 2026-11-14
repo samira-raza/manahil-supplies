@@ -36,6 +36,12 @@
         outline: 2px solid #6366f1;
         outline-offset: 2px;
       }
+      /* D39: a field that blocks saving is outlined in red (set by services/formCheck.ts) */
+      input[aria-invalid="true"], select[aria-invalid="true"], textarea[aria-invalid="true"] {
+        border-color: #ef4444 !important;
+        border-width: 2px !important;
+        background-color: #fef2f2 !important;
+      }
       /* Scrollbar styling */
       ::-webkit-scrollbar { width: 8px; height: 8px; }
       ::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 10px; }
