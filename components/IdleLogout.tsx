@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { IDLE_LIMIT_MS, IDLE_WARNING_MS, markActive, lastActive, noteIdleSignOut } from '../services/idle';
 
-// Signs the person out after 2 minutes with no mouse, keyboard, scroll or touch activity.
+// Signs the person out after 10 minutes with no mouse, keyboard, scroll or touch activity.
 // 15 seconds before, a warning with a "Stay signed in" button appears.
 const ACTIVITY_EVENTS = ['mousemove', 'mousedown', 'keydown', 'wheel', 'scroll', 'touchstart'] as const;
 

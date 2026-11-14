@@ -155,7 +155,7 @@ const useCRMStore = () => {
 
       // Restore logged-in user session from localStorage
       let savedUserId = localStorage.getItem('packtrack_current_user_id');
-      // A session left unused for more than 2 minutes (e.g. browser closed and reopened later) is not restored
+      // A session left unused for more than 10 minutes (e.g. browser closed and reopened later) is not restored
       if (savedUserId && idleExpired()) {
         localStorage.removeItem('packtrack_current_user_id');
         noteIdleSignOut();
@@ -604,7 +604,7 @@ const LoginPage = () => {
         <p className="text-slate-500 mb-8 text-base">Enter your credentials to login</p>
         {idleNote && (
           <div className="mb-6 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm font-bold text-left" role="status">
-            You were signed out because the app wasn't used for 2 minutes. Please log in again.
+            You were signed out because the app wasn't used for 10 minutes. Please log in again.
           </div>
         )}
         <div className="mb-4">
