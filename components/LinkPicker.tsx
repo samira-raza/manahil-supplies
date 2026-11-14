@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Category, Product } from '../types';
 import { categoryOf, categoryFullName } from '../services/categories';
-import { errorBoxCls } from '../services/errors';
+import { ErrorBox } from './Dialog';
 
 // Linked products picker (agreed 14 Nov 2026): type to narrow the list, tick several products,
 // then link them all with one button. Used on the product page and on Create Product / Save Copy.
@@ -105,7 +105,7 @@ const LinkPicker: React.FC<{
       {matches.length > MAX_SHOWN && (
         <p className="text-[10px] text-slate-400 font-bold">Showing the first {MAX_SHOWN} of {matches.length}. Type more to narrow the list.</p>
       )}
-      {error && <div className={errorBoxCls} role="alert">{error}</div>}
+      <ErrorBox msg={error} />
       <div className="flex justify-end gap-2 pt-1">
         <button type="button" onClick={close} className="px-4 py-2 rounded-lg font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 text-xs">Cancel</button>
         <button type="button" onClick={confirm} disabled={picked.length === 0 || busy}

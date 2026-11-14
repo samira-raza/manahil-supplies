@@ -9,6 +9,7 @@ import { db } from '../services/db';
 import { notSavedMessage, errorBoxCls } from '../services/errors';
 import { useFieldErrors, FieldErrors } from '../services/formErrors';
 import FieldMessage from '../components/FieldMessage';
+import { ErrorBox } from '../components/Dialog';
 import LinkPicker from '../components/LinkPicker';
 import { categoryOf, categoryFullName, categoryLabel, sortCategories } from '../services/categories';
 import { localToday, mainSupplier, activeSuppliers, orderedSuppliers, priceOn, priceRecordOn, sortPrices, supplierOf, hasSupplier } from '../services/pricing';
@@ -887,7 +888,7 @@ const MetadataModal: React.FC<{
             </div>
           </div>
 
-          {saveError && <div className={errorBoxCls} role="alert">{saveError}</div>}
+          <ErrorBox msg={saveError} />
 
           <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 md:gap-4 pt-4 md:pt-6 border-t border-slate-100">
             <button type="button" onClick={onClose} className="px-6 md:px-8 py-3 md:py-4 rounded-xl md:rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors uppercase tracking-widest text-[10px]">Cancel</button>
@@ -1004,7 +1005,7 @@ const PriceModal: React.FC<{
           <p>This price starts on {confirmPast.values.effectiveDate}, which is in the past.</p>
           <p>Orders already placed keep the price they were placed at. <b>{confirmPast.count} order{confirmPast.count === 1 ? '' : 's'}</b> with {vendorName(vendorId)} for this product since that date will not change.</p>
         </div>
-        {saveError && <div className={errorBoxCls} role="alert">{saveError}</div>}
+        <ErrorBox msg={saveError} />
         <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 pt-2">
           <button type="button" onClick={() => setConfirmPast(null)} className={cancelCls}>Go back</button>
           <button type="button" disabled={saving} onClick={() => save(confirmPast.values)} className={saveCls}>{saving ? 'Saving...' : 'Save price'}</button>
@@ -1029,7 +1030,7 @@ const PriceModal: React.FC<{
           </div>
         )}
         <PriceFields price={price} date={date} note={note} setPrice={setPrice} setDate={setDate} setNote={setNote} fe={fe} />
-        {saveError && <div className={errorBoxCls} role="alert">{saveError}</div>}
+        <ErrorBox msg={saveError} />
         <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 md:gap-4 pt-4 border-t border-slate-100">
           <button type="button" onClick={onClose} className={cancelCls}>Cancel</button>
           <button type="submit" disabled={saving} className={saveCls}>{saving ? 'Saving...' : editing ? 'Save correction' : 'Add price'}</button>
@@ -1088,7 +1089,7 @@ const SupplierModal: React.FC<{
               <input type="checkbox" checked={makeMain} onChange={e => setMakeMain(e.target.checked)} /> Make this the main supplier
             </label>
           )}
-          {saveError && <div className={errorBoxCls} role="alert">{saveError}</div>}
+          <ErrorBox msg={saveError} />
           <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 md:gap-4 pt-4 border-t border-slate-100">
             <button type="button" onClick={onClose} className={cancelCls}>Cancel</button>
             <button type="submit" disabled={saving} className={saveCls}>{saving ? 'Saving...' : replacing ? 'Replace' : 'Add supplier'}</button>
@@ -1115,7 +1116,7 @@ const StopMainModal: React.FC<{
         <option value="">No main supplier</option>
         {others.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
       </select>
-      {saveError && <div className={errorBoxCls} role="alert">{saveError}</div>}
+      <ErrorBox msg={saveError} />
       <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 pt-2">
         <button type="button" onClick={onClose} className={cancelCls}>Cancel</button>
         <button type="button" onClick={() => onConfirm(choice || null)} className={saveCls}>Stop supplier</button>
@@ -1128,7 +1129,7 @@ const ConfirmModal: React.FC<{ title: string; message: string; confirmLabel?: st
   ({ title, message, confirmLabel, onClose, onConfirm, saveError }) => (
   <ModalShell title={title} onClose={onClose}>
     <p className="text-sm text-slate-600">{message}</p>
-    {saveError && <div className={errorBoxCls} role="alert">{saveError}</div>}
+    <ErrorBox msg={saveError} />
     <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 pt-2">
       <button type="button" onClick={onClose} className={cancelCls}>{confirmLabel ? 'Cancel' : 'Close'}</button>
       {confirmLabel && <button type="button" onClick={onConfirm} className="px-8 py-3 md:py-4 rounded-xl md:rounded-2xl font-black text-white bg-red-600 hover:bg-red-700 uppercase tracking-widest text-[10px]">{confirmLabel}</button>}

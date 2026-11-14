@@ -11,6 +11,7 @@ import { brandEntries, entryKey, entryText, buildProductTitle, contentsPart, pro
 import { sortCategories, categoryLabel } from '../services/categories';
 import { useFieldErrors, FieldErrors } from '../services/formErrors';
 import FieldMessage from '../components/FieldMessage';
+import { ErrorBox } from '../components/Dialog';
 import LinkPicker from '../components/LinkPicker';
 
 // The brand picked on the form is one entry: "parentId" (parent alone) or "parentId|setId" (a brand set)
@@ -860,7 +861,7 @@ const Products: React.FC = () => {
               </div>
 
               {priceWarning && <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm font-bold">{priceWarning}</div>}
-              {formError && <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-700 text-sm font-bold" role="alert">{formError}</div>}
+              <ErrorBox msg={formError} />
 
               <div className="flex flex-col sm:flex-row justify-end gap-3 md:gap-4 pt-6 md:pt-10 border-t border-slate-100">
                 <button type="button" onClick={() => setShowAddModal(false)} className="px-6 md:px-8 py-3 md:py-4 rounded-xl md:rounded-2xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 transition-colors uppercase tracking-widest text-[10px] order-2 sm:order-1">Discard</button>

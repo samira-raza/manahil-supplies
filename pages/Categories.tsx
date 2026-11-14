@@ -6,6 +6,7 @@ import { Icons } from '../constants';
 import { db } from '../services/db';
 import { productTitleFor } from '../services/brands';
 import { notSavedMessage, errorBoxCls } from '../services/errors';
+import { Modal, ConfirmButtons, ConfirmDialog, ErrorBox, primaryBtn } from '../components/Dialog';
 import { useFieldErrors, FieldErrors } from '../services/formErrors';
 import FieldMessage from '../components/FieldMessage';
 import {
@@ -16,8 +17,6 @@ import {
 
 const inputCls = 'w-full px-4 py-3 rounded-xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm disabled:bg-slate-100 disabled:text-slate-500';
 const labelCls = 'block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2';
-const primaryBtn = 'px-6 py-3 rounded-xl font-black text-white bg-indigo-600 hover:bg-indigo-700 uppercase tracking-widest text-[10px] disabled:opacity-50';
-const cancelBtn = 'px-6 py-3 rounded-xl font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 uppercase tracking-widest text-[10px]';
 const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
 type FormValues = { fullName: string; word: string; shortCode: string; description: string };
@@ -275,47 +274,8 @@ const Categories: React.FC = () => {
 
 // ---- Dialogs ----
 
-const Modal: React.FC<{ title: string; subtitle?: string; onClose: () => void; children: React.ReactNode }> = ({ title, subtitle, onClose, children }) => (
-  <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-md z-50 flex items-center justify-center p-2 md:p-4">
-    <div className="bg-white rounded-2xl md:rounded-[32px] w-full max-w-lg shadow-2xl border border-slate-200 max-h-[95vh] flex flex-col">
-      <div className="p-4 md:p-6 border-b border-slate-100 flex justify-between items-start gap-3">
-        <div>
-          <h2 className="text-lg md:text-xl font-black text-slate-900">{title}</h2>
-          {subtitle && <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mt-1">{subtitle}</p>}
-        </div>
-        <button onClick={onClose} className="p-2 hover:bg-slate-100 rounded-xl text-slate-400">✕</button>
-      </div>
-      <div className="p-4 md:p-6 overflow-y-auto space-y-4">{children}</div>
-    </div>
-  </div>
-);
 
-const ConfirmButtons: React.FC<{ label: string; onCancel: () => void; onConfirm: () => void | Promise<void> }> = ({ label, onCancel, onConfirm }) => {
-  const [busy, setBusy] = useState(false);
-  return (
-    <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 pt-2">
-      <button type="button" onClick={onCancel} className={cancelBtn}>Cancel</button>
-      <button type="button" disabled={busy} onClick={async () => { setBusy(true); await onConfirm(); setBusy(false); }} className={primaryBtn}>{busy ? 'Saving...' : label}</button>
-    </div>
-  );
-};
 
-// A confirmation box that keeps itself open and shows the reason when the action fails (BUG-280)
-const ConfirmDialog: React.FC<{ title: string; message: React.ReactNode; label: string; onClose: () => void; run: () => Promise<string> }> =
-  ({ title, message, label, onClose, run }) => {
-  const [error, setError] = useState('');
-  return (
-    <Modal title={title} onClose={onClose}>
-      <div className="text-sm text-slate-600">{message}</div>
-      {error && <div className={errorBoxCls} role="alert">{error}</div>}
-      <ConfirmButtons label={label} onCancel={onClose} onConfirm={async () => {
-        setError('');
-        const failed = await run();
-        if (failed) setError(failed); else onClose();
-      }} />
-    </Modal>
-  );
-};
 
 const CategoryDialog: React.FC<{
   category?: Category;
@@ -407,7 +367,7 @@ const CategoryDialog: React.FC<{
         <label className={labelCls}>Description (optional)</label>
         <textarea className={`${inputCls} h-20 resize-none`} value={description} onChange={e => setDescription(e.target.value)} placeholder="What items fall under this category" />
       </div>
-      {error && <div className={errorBoxCls} role="alert">{error}</div>}
+      <ErrorBox msg={error} />
       <ConfirmButtons label={isNew ? 'Add category' : 'Save changes'} onCancel={onClose} onConfirm={save} />
     </Modal>
   );

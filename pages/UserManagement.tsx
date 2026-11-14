@@ -7,6 +7,7 @@ import { db } from '../services/db';
 import { notSavedMessage, errorBoxCls } from '../services/errors';
 import { useFieldErrors } from '../services/formErrors';
 import VendorAccess from '../components/VendorAccess';
+import { ErrorBox } from '../components/Dialog';
 
 const generatePassword = () => {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
@@ -587,7 +588,7 @@ const UserDetailsModal: React.FC<{
                 <>
                   <VendorAccess all={accessAll} ids={accessIds} vendors={vendors}
                     onChange={(all, ids) => { setAccessAll(all); setAccessIds(ids); setAccessError(''); }} error={accessError} />
-                  {accessSaveError && <div className={errorBoxCls} role="alert">{accessSaveError}</div>}
+                  <ErrorBox msg={accessSaveError} />
                   <div className="flex justify-end gap-2">
                     <button type="button" onClick={() => setEditingAccess(false)} className="px-4 py-2 rounded-lg font-bold text-slate-500 bg-slate-100 hover:bg-slate-200 text-xs">Cancel</button>
                     <button type="button" disabled={accessSaving} onClick={saveAccess} className="px-4 py-2 rounded-lg font-black text-white bg-indigo-600 hover:bg-indigo-700 text-xs disabled:opacity-50">{accessSaving ? 'Saving...' : 'Save vendor access'}</button>
