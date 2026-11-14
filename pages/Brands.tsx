@@ -4,6 +4,7 @@ import { CRMContext, generateId } from '../App';
 import { Brand, BrandActivity, BrandSet, Product } from '../types';
 import { Icons } from '../constants';
 import { db } from '../services/db';
+import { notSavedMessage, errorBoxCls } from '../services/errors';
 import {
   parentBrands, childBrandsOf, setsOf, setText, setChildNames, productTitleFor,
   defaultInitials, suggestInitials, validInitials, brandPermissions,
@@ -24,7 +25,8 @@ type Dialog =
   | { kind: 'child'; parent: Brand; brand?: Brand }
   | { kind: 'move'; brand: Brand }
   | { kind: 'set'; parent: Brand }
-  | { kind: 'confirm'; title: string; message: string; label: string; run: () => Promise<boolean> };
+  // run returns '' when it worked, or the message to show inside the dialog (BUG-281)
+  | { kind: 'confirm'; title: string; message: string; label: string; run: () => Promise<string> };
 
 const Brands: React.FC = () => {
   const ctx = useContext(CRMContext);
@@ -63,25 +65,27 @@ const Brands: React.FC = () => {
     return true;
   };
 
+  // Each save returns '' when it worked, or the message to show inside the open dialog (BUG-281)
   const saveBrand = async (b: Brand) => {
     setError('');
     const { error: e } = await db.upsertBrand(b);
-    if (e) { setError(`Not saved: ${e.message}`); return false; }
+    if (e) return notSavedMessage(e, 'The brand');
     setBrands(prev => prev.some(x => x.id === b.id) ? prev.map(x => x.id === b.id ? b : x) : [...prev, b]);
-    return true;
+    return '';
   };
 
   const setActive = async (target: { brand?: Brand; set?: BrandSet }, active: boolean) => {
     if (target.brand) {
-      if (!(await saveBrand({ ...target.brand, isActive: active }))) return false;
+      const failed = await saveBrand({ ...target.brand, isActive: active });
+      if (failed) return failed;
       await log({ brandId: target.brand.id, type: active ? 'ENABLED' : 'DISABLED', details: `${target.brand.name} ${active ? 'switched back on' : 'disabled'}` });
     } else if (target.set) {
       const { error: e } = await db.setBrandSetActive(target.set.id, active);
-      if (e) { setError(`Not saved: ${e.message}`); return false; }
+      if (e) return notSavedMessage(e, 'The change');
       setBrandSets(prev => prev.map(s => s.id === target.set!.id ? { ...s, isActive: active } : s));
       await log({ brandId: target.set.parentId, setId: target.set.id, type: active ? 'ENABLED' : 'DISABLED', details: `Brand set ${setText(target.set, brands)} ${active ? 'switched back on' : 'disabled'}` });
     }
-    return true;
+    return '';
   };
 
   const askDisable = (target: { brand?: Brand; set?: BrandSet }, active: boolean) => {
@@ -108,16 +112,16 @@ const Brands: React.FC = () => {
         setError('');
         if (target.brand) {
           const { error: e } = await db.deleteBrand(target.brand.id);
-          if (e) { setError(`Not deleted: ${e.message}`); return false; }
+          if (e) return notSavedMessage(e, target.brand.name, 'deleted');
           setBrands(prev => prev.filter(b => b.id !== target.brand!.id));
           await log({ brandId: target.brand.parentId || target.brand.id, type: 'DELETED', details: `${target.brand.name} deleted` });
         } else if (target.set) {
           const { error: e } = await db.deleteBrandSet(target.set.id);
-          if (e) { setError(`Not deleted: ${e.message}`); return false; }
+          if (e) return notSavedMessage(e, 'The brand set', 'deleted');
           setBrandSets(prev => prev.filter(s => s.id !== target.set!.id));
           await log({ brandId: target.set.parentId, type: 'DELETED', details: `Brand set ${setText(target.set, brands)} deleted` });
         }
-        return true;
+        return '';
       },
     });
   };
@@ -143,7 +147,7 @@ const Brands: React.FC = () => {
         )}
       </div>
 
-      {error && <div className="p-3 rounded-xl bg-red-50 text-red-700 text-sm font-bold flex justify-between gap-3"><span>{error}</span><button onClick={() => setError('')}>✕</button></div>}
+      {error && <div className={`${errorBoxCls} flex justify-between gap-3`}><span>{error}</span><button onClick={() => setError('')}>✕</button></div>}
 
       <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search brands, child brands, initials or labels..." className="w-full px-4 py-3 rounded-xl bg-white border border-slate-200 text-sm font-medium" />
 
@@ -282,7 +286,8 @@ const Brands: React.FC = () => {
             if (dialog.brand) {
               const before = dialog.brand;
               const next: Brand = { ...before, name: values.name, label: values.label || undefined };
-              if (!(await saveBrand(next))) return;
+              const failed = await saveBrand(next);
+              if (failed) return failed;
               if (!same(before.name, next.name)) {
                 await log({ brandId: next.id, type: 'RENAMED', details: `Renamed from "${before.name}" to "${next.name}"` });
                 await renameProducts(brands.map(b => b.id === next.id ? next : b), productsOfParent(next.id));
@@ -292,11 +297,13 @@ const Brands: React.FC = () => {
               }
             } else {
               const b: Brand = { id: generateId(), name: values.name, initials: values.initials, label: values.label || undefined, isActive: true, createdBy: currentUser?.name };
-              if (!(await saveBrand(b))) return;
+              const failed = await saveBrand(b);
+              if (failed) return failed;
               await log({ brandId: b.id, type: 'CREATED', details: `${b.name} created with initials ${b.initials}` });
               setExpanded(b.id);
             }
             setDialog(null);
+            return '';
           }}
         />
       )}
@@ -308,9 +315,11 @@ const Brands: React.FC = () => {
           onClose={() => setDialog(null)}
           onSave={async (initials) => {
             const before = dialog.brand.initials;
-            if (!(await saveBrand({ ...dialog.brand, initials }))) return;
+            const failed = await saveBrand({ ...dialog.brand, initials });
+            if (failed) return failed;
             await log({ brandId: dialog.brand.id, type: 'INITIALS_CHANGED', details: `Initials changed from ${before} to ${initials}. Existing products and orders keep the old initials` });
             setDialog(null);
+            return '';
           }}
         />
       )}
@@ -325,15 +334,18 @@ const Brands: React.FC = () => {
             if (dialog.brand) {
               const before = dialog.brand;
               const next: Brand = { ...before, name };
-              if (!(await saveBrand(next))) return;
+              const failed = await saveBrand(next);
+              if (failed) return failed;
               await log({ brandId: next.id, type: 'RENAMED', details: `Child brand renamed from "${before.name}" to "${next.name}"` });
               await renameProducts(brands.map(b => b.id === next.id ? next : b), productsOfChild(next.id));
             } else {
               const b: Brand = { id: generateId(), name, parentId: dialog.parent.id, isActive: true, createdBy: currentUser?.name };
-              if (!(await saveBrand(b))) return;
+              const failed = await saveBrand(b);
+              if (failed) return failed;
               await log({ brandId: b.id, type: 'CREATED', details: `Child brand ${b.name} added under ${dialog.parent.name}` });
             }
             setDialog(null);
+            return '';
           }}
         />
       )}
@@ -346,9 +358,11 @@ const Brands: React.FC = () => {
           onSave={async (parentId) => {
             const from = brands.find(b => b.id === dialog.brand.parentId)?.name;
             const to = brands.find(b => b.id === parentId)?.name;
-            if (!(await saveBrand({ ...dialog.brand, parentId }))) return;
+            const failed = await saveBrand({ ...dialog.brand, parentId });
+            if (failed) return failed;
             await log({ brandId: dialog.brand.id, type: 'MOVED', details: `${dialog.brand.name} moved from ${from} to ${to}` });
             setDialog(null);
+            return '';
           }}
         />
       )}
@@ -364,19 +378,18 @@ const Brands: React.FC = () => {
             setError('');
             const s: BrandSet = { id: generateId(), parentId: dialog.parent.id, childIds, isActive: true, createdBy: currentUser?.name };
             const { error: e } = await db.insertBrandSet(s);
-            if (e) { setError(`The brand set was not saved: ${e.message}`); return; }
+            if (e) return notSavedMessage(e, 'The brand set');
             setBrandSets(prev => [...prev, s]);
             await log({ brandId: dialog.parent.id, setId: s.id, type: 'CREATED', details: `Brand set ${setText(s, brands)} created` });
             setDialog(null);
+            return '';
           }}
         />
       )}
 
       {dialog?.kind === 'confirm' && (
-        <Modal title={dialog.title} onClose={() => setDialog(null)}>
-          <p className="text-sm text-slate-600">{dialog.message}</p>
-          <ConfirmButtons label={dialog.label} onCancel={() => setDialog(null)} onConfirm={async () => { if (await dialog.run()) setDialog(null); }} />
-        </Modal>
+        <ConfirmDialog key={dialog.title + dialog.message} title={dialog.title} message={dialog.message} label={dialog.label}
+          onClose={() => setDialog(null)} run={dialog.run} />
       )}
     </div>
   );
@@ -409,7 +422,24 @@ const ConfirmButtons: React.FC<{ label: string; onCancel: () => void; onConfirm:
   );
 };
 
-const ParentDialog: React.FC<{ brand?: Brand; parents: Brand[]; onClose: () => void; onSave: (v: { name: string; initials: string; label: string }) => Promise<void> }> =
+// A confirmation box that stays open and shows the reason when the action fails (BUG-281)
+const ConfirmDialog: React.FC<{ title: string; message: string; label: string; onClose: () => void; run: () => Promise<string> }> =
+  ({ title, message, label, onClose, run }) => {
+  const [error, setError] = useState('');
+  return (
+    <Modal title={title} onClose={onClose}>
+      <p className="text-sm text-slate-600">{message}</p>
+      {error && <div className={errorBoxCls} role="alert">{error}</div>}
+      <ConfirmButtons label={label} onCancel={onClose} onConfirm={async () => {
+        setError('');
+        const failed = await run();
+        if (failed) setError(failed); else onClose();
+      }} />
+    </Modal>
+  );
+};
+
+const ParentDialog: React.FC<{ brand?: Brand; parents: Brand[]; onClose: () => void; onSave: (v: { name: string; initials: string; label: string }) => Promise<string> }> =
   ({ brand, parents, onClose, onSave }) => {
   const [name, setName] = useState(brand?.name || '');
   const [label, setLabel] = useState(brand?.label || '');
@@ -435,7 +465,8 @@ const ParentDialog: React.FC<{ brand?: Brand; parents: Brand[]; onClose: () => v
       if (!validInitials(initials)) return setError('Initials must be 2 or 3 capital letters.');
       if (holder) return setError(`Initials ${initials} are already used by ${holder.name}.`);
     }
-    await onSave({ name: name.trim(), initials, label: label.trim() });
+    const failed = await onSave({ name: name.trim(), initials, label: label.trim() });
+    if (failed) setError(failed);
   };
 
   const usual = defaultInitials(name);
@@ -461,13 +492,13 @@ const ParentDialog: React.FC<{ brand?: Brand; parents: Brand[]; onClose: () => v
         <input className={inputCls} value={label} onChange={e => setLabel(e.target.value)} placeholder="e.g. Charcoal Range" />
         <p className="text-[11px] text-slate-400 mt-1">Shown under product names and searchable. The name always keeps the full list of child brands.</p>
       </div>
-      {error && <div className="p-3 rounded-xl bg-red-50 text-red-700 text-sm font-bold">{error}</div>}
+      {error && <div className={errorBoxCls} role="alert">{error}</div>}
       <ConfirmButtons label={brand ? 'Save changes' : 'Add brand'} onCancel={onClose} onConfirm={save} />
     </Modal>
   );
 };
 
-const InitialsDialog: React.FC<{ brand: Brand; parents: Brand[]; onClose: () => void; onSave: (initials: string) => Promise<void> }> = ({ brand, parents, onClose, onSave }) => {
+const InitialsDialog: React.FC<{ brand: Brand; parents: Brand[]; onClose: () => void; onSave: (initials: string) => Promise<string> }> = ({ brand, parents, onClose, onSave }) => {
   const [initials, setInitials] = useState(brand.initials || '');
   const [error, setError] = useState('');
   const holder = parents.find(p => p.id !== brand.id && p.initials === initials);
@@ -476,20 +507,21 @@ const InitialsDialog: React.FC<{ brand: Brand; parents: Brand[]; onClose: () => 
     if (!validInitials(initials)) return setError('Initials must be 2 or 3 capital letters.');
     if (holder) return setError(`${initials} is already used by ${holder.name}.`);
     if (initials === brand.initials) return setError('These are the current initials.');
-    await onSave(initials);
+    const failed = await onSave(initials);
+    if (failed) setError(failed);
   };
   return (
     <Modal title="Change Initials" subtitle={brand.name} onClose={onClose}>
       <p className="text-sm text-slate-600">Existing products and orders keep the old initials. New products use the new ones. The change is recorded.</p>
       <input className={inputCls} value={initials} maxLength={3} onChange={e => setInitials(e.target.value.toUpperCase().replace(/[^A-Z]/g, ''))} />
       {holder && <p className="text-xs text-red-600 font-bold">{initials} is already used by {holder.name}.</p>}
-      {error && <div className="p-3 rounded-xl bg-red-50 text-red-700 text-sm font-bold">{error}</div>}
+      {error && <div className={errorBoxCls} role="alert">{error}</div>}
       <ConfirmButtons label="Change initials" onCancel={onClose} onConfirm={save} />
     </Modal>
   );
 };
 
-const ChildDialog: React.FC<{ parent: Brand; brand?: Brand; brands: Brand[]; onClose: () => void; onSave: (name: string) => Promise<void> }> = ({ parent, brand, brands, onClose, onSave }) => {
+const ChildDialog: React.FC<{ parent: Brand; brand?: Brand; brands: Brand[]; onClose: () => void; onSave: (name: string) => Promise<string> }> = ({ parent, brand, brands, onClose, onSave }) => {
   const [name, setName] = useState(brand?.name || '');
   const [error, setError] = useState('');
   // A child brand name exists under one parent only
@@ -499,7 +531,8 @@ const ChildDialog: React.FC<{ parent: Brand; brand?: Brand; brands: Brand[]; onC
     setError('');
     if (!name.trim()) return setError('Please enter the child brand name.');
     if (clash) return setError(`"${clash.name}" already exists under ${clashParent}. A child brand can belong to one parent only.`);
-    await onSave(name.trim());
+    const failed = await onSave(name.trim());
+    if (failed) setError(failed);
   };
   return (
     <Modal title={brand ? 'Rename Child Brand' : 'Add Child Brand'} subtitle={`Under ${parent.name}`} onClose={onClose}>
@@ -509,14 +542,20 @@ const ChildDialog: React.FC<{ parent: Brand; brand?: Brand; brands: Brand[]; onC
         {clash && <p className="text-xs text-red-600 font-bold mt-1">Already exists under {clashParent}.</p>}
         {brand && <p className="text-[11px] text-slate-400 mt-1">Every product using it gets its name updated.</p>}
       </div>
-      {error && <div className="p-3 rounded-xl bg-red-50 text-red-700 text-sm font-bold">{error}</div>}
+      {error && <div className={errorBoxCls} role="alert">{error}</div>}
       <ConfirmButtons label={brand ? 'Save' : 'Add child brand'} onCancel={onClose} onConfirm={save} />
     </Modal>
   );
 };
 
-const MoveDialog: React.FC<{ brand: Brand; parents: Brand[]; onClose: () => void; onSave: (parentId: string) => Promise<void> }> = ({ brand, parents, onClose, onSave }) => {
+const MoveDialog: React.FC<{ brand: Brand; parents: Brand[]; onClose: () => void; onSave: (parentId: string) => Promise<string> }> = ({ brand, parents, onClose, onSave }) => {
   const [parentId, setParentId] = useState('');
+  const [error, setError] = useState('');
+  const save = async () => {
+    setError('');
+    const failed = await onSave(parentId);
+    if (failed) setError(failed);
+  };
   return (
     <Modal title="Move Child Brand" subtitle={brand.name} onClose={onClose}>
       <p className="text-sm text-slate-600">Only possible while no brand set uses it.</p>
@@ -524,12 +563,13 @@ const MoveDialog: React.FC<{ brand: Brand; parents: Brand[]; onClose: () => void
         <option value="">-- Choose new parent --</option>
         {parents.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
       </select>
-      <ConfirmButtons label="Move" disabled={!parentId} onCancel={onClose} onConfirm={() => onSave(parentId)} />
+      {error && <div className={errorBoxCls} role="alert">{error}</div>}
+      <ConfirmButtons label="Move" disabled={!parentId} onCancel={onClose} onConfirm={save} />
     </Modal>
   );
 };
 
-const SetDialog: React.FC<{ parent: Brand; children: Brand[]; existing: BrandSet[]; brands: Brand[]; onClose: () => void; onSave: (childIds: string[]) => Promise<void> }> =
+const SetDialog: React.FC<{ parent: Brand; children: Brand[]; existing: BrandSet[]; brands: Brand[]; onClose: () => void; onSave: (childIds: string[]) => Promise<string> }> =
   ({ parent, children, existing, brands, onClose, onSave }) => {
   const [picked, setPicked] = useState<string[]>([]);
   const [error, setError] = useState('');
@@ -540,7 +580,8 @@ const SetDialog: React.FC<{ parent: Brand; children: Brand[]; existing: BrandSet
     setError('');
     if (picked.length === 0) return setError('Tick at least one child brand.');
     if (duplicate) return setError('This brand set already exists.');
-    await onSave(picked);
+    const failed = await onSave(picked);
+    if (failed) setError(failed);
   };
   return (
     <Modal title="Add Brand Set" subtitle="Fixed once saved. Different child brands means a new set." onClose={onClose}>
@@ -554,7 +595,7 @@ const SetDialog: React.FC<{ parent: Brand; children: Brand[]; existing: BrandSet
       </div>
       {picked.length > 0 && <div className="p-3 rounded-xl bg-indigo-50 text-indigo-800 text-sm font-bold">{preview}</div>}
       {duplicate && <p className="text-xs text-red-600 font-bold">This brand set already exists.</p>}
-      {error && <div className="p-3 rounded-xl bg-red-50 text-red-700 text-sm font-bold">{error}</div>}
+      {error && <div className={errorBoxCls} role="alert">{error}</div>}
       <ConfirmButtons label="Save brand set" onCancel={onClose} onConfirm={save} />
     </Modal>
   );
