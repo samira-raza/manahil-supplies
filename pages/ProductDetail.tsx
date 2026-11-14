@@ -7,6 +7,8 @@ import { Brand, BrandSet, Category, Product, ProductActivity, ProductActivityTyp
 import { buildProductTitle, disabledBrandNames, entryText, productBrandParts } from '../services/brands';
 import { db } from '../services/db';
 import { notSavedMessage, errorBoxCls } from '../services/errors';
+import { useFieldErrors, FieldErrors } from '../services/formErrors';
+import FieldMessage from '../components/FieldMessage';
 import { categoryOf, categoryFullName, categoryLabel, sortCategories } from '../services/categories';
 import { localToday, mainSupplier, activeSuppliers, orderedSuppliers, priceOn, priceRecordOn, sortPrices, supplierOf, hasSupplier } from '../services/pricing';
 import { productPermissions } from '../services/permissions';
@@ -719,7 +721,7 @@ const MetadataModal: React.FC<{
 }> = ({ product, categories, measuringUnits, products, onClose, onSave, requireChange = false, brands, brandSets, saveError }) => {
   // A product's brand is locked after creation (agreed 12 Nov 2026): change it by duplicating
   const brandParts = productBrandParts(product, brands, brandSets);
-  const [nameError, setNameError] = useState('');
+  const fe = useFieldErrors();
   const [formData, setFormData] = useState({
     category: product.category,
     itemName: product.itemName,
@@ -753,10 +755,16 @@ const MetadataModal: React.FC<{
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!isDirty) return;
-    setNameError('');
-    if (!(formData.itemName || '').trim()) { setNameError('Item name is required.'); return; }
-    const sameName = products.find((p: any) => p.id !== product.id && p.title.trim().toLowerCase() === generatedTitle.trim().toLowerCase());
-    if (sameName) { setNameError(`Another product already has this name: "${sameName.title}". Change the item name, e.g. add "Large".`); return; }
+    // D39: outline each field that blocks saving and move the cursor to the first
+    const errs: FieldErrors = {};
+    if (!(formData.itemName || '').trim()) {
+      errs.itemName = 'Enter the item name.';
+    } else {
+      const sameName = products.find((p: any) => p.id !== product.id && p.title.trim().toLowerCase() === generatedTitle.trim().toLowerCase());
+      if (sameName) errs.itemName = `Another product already has this name: "${sameName.title}". Change the item name, e.g. add "Large".`;
+    }
+    if (!(formData.unitSize || '').trim()) errs.unitSize = 'Enter the unit size.';
+    if (fe.show(errs)) return;
     // Linked products are managed on the product page, not here
     onSave({ ...formData, title: generatedTitle, categoryId: categories.find(c => c.name === formData.category)?.id });
   };
@@ -774,7 +782,7 @@ const MetadataModal: React.FC<{
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-4 md:p-10 overflow-y-auto space-y-4 md:space-y-6 flex-1">
+        <form onSubmit={handleSubmit} noValidate className="p-4 md:p-10 overflow-y-auto space-y-4 md:space-y-6 flex-1">
           <div className="bg-indigo-600 p-4 md:p-6 rounded-2xl md:rounded-[24px] text-white shadow-lg">
             <div className="text-[9px] md:text-[10px] font-black text-indigo-200 uppercase tracking-widest mb-2">Display Name Preview</div>
             <div className="text-sm md:text-lg font-black leading-tight break-words">{generatedTitle || 'Awaiting Input...'}</div>
@@ -801,7 +809,8 @@ const MetadataModal: React.FC<{
             </div>
             <div className="md:col-span-2">
               <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Item Name*</label>
-              <input name="itemName" value={formData.itemName} onChange={handleChange} type="text" className="w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm" required />
+              <input name="itemName" value={formData.itemName} onChange={handleChange} type="text" {...fe.field('itemName', "w-full px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm")} />
+              <FieldMessage msg={fe.errors.itemName} />
             </div>
             <div className="md:col-span-2">
               <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Description</label>
@@ -810,7 +819,7 @@ const MetadataModal: React.FC<{
             <div>
               <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Unit Size*</label>
               <div className="flex gap-2">
-                <input name="unitSize" value={formData.unitSize} onChange={handleChange} type="text" className="flex-1 px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm" placeholder="e.g. 60x40x40" required />
+                <input name="unitSize" value={formData.unitSize} onChange={handleChange} type="text" {...fe.field('unitSize', "flex-1 min-w-0 px-4 md:px-5 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm")} placeholder="e.g. 60x40x40" />
                 <select name="measuringUnit" value={formData.measuringUnit} onChange={handleChange} className="w-20 md:w-24 px-2 md:px-3 py-3 md:py-4 rounded-xl md:rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm">
                   <option value="">Unit</option>
                   {measuringUnits.map((u: any) => (
@@ -818,6 +827,7 @@ const MetadataModal: React.FC<{
                   ))}
                 </select>
               </div>
+              <FieldMessage msg={fe.errors.unitSize} />
             </div>
             <div>
               <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Packing</label>
@@ -825,7 +835,6 @@ const MetadataModal: React.FC<{
             </div>
           </div>
 
-          {nameError && <div className="p-3 rounded-xl bg-red-50 text-red-700 text-sm font-bold">{nameError}</div>}
           {saveError && <div className={errorBoxCls} role="alert">{saveError}</div>}
 
           <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 md:gap-4 pt-4 md:pt-6 border-t border-slate-100">
@@ -863,17 +872,19 @@ const ModalShell: React.FC<{ title: string; subtitle?: string; onClose: () => vo
 );
 
 // Price, start date and note fields, shared by the price and supplier dialogs
-const PriceFields: React.FC<{ price: string; date: string; note: string; setPrice: (v: string) => void; setDate: (v: string) => void; setNote: (v: string) => void }> =
-  ({ price, date, note, setPrice, setDate, setNote }) => (
+const PriceFields: React.FC<{ price: string; date: string; note: string; setPrice: (v: string) => void; setDate: (v: string) => void; setNote: (v: string) => void; fe: ReturnType<typeof useFieldErrors> }> =
+  ({ price, date, note, setPrice, setDate, setNote, fe }) => (
   <>
     <div className="grid grid-cols-2 gap-3">
       <div>
         <label className={labelCls}>Price per piece (PKR)*</label>
-        <input type="number" step="0.001" min="0" value={price} onChange={e => setPrice(e.target.value)} className={inputCls} placeholder="0.00" required />
+        <input type="number" step="0.001" min="0" value={price} onChange={e => setPrice(e.target.value)} {...fe.field('price', inputCls)} placeholder="0.00" />
+        <FieldMessage msg={fe.errors.price} />
       </div>
       <div>
         <label className={labelCls}>Starts on*</label>
-        <input type="date" value={date} onChange={e => setDate(e.target.value)} className={inputCls} required />
+        <input type="date" value={date} onChange={e => setDate(e.target.value)} {...fe.field('date', inputCls)} />
+        <FieldMessage msg={fe.errors.date} />
       </div>
     </div>
     <div>
@@ -883,12 +894,18 @@ const PriceFields: React.FC<{ price: string; date: string; note: string; setPric
   </>
 );
 
-const readPrice = (price: string, date: string, note: string): PriceValues | string => {
+// D39: the price and date problems, one per field
+const priceErrors = (price: string, date: string): FieldErrors => {
+  const errs: FieldErrors = {};
   const n = parseFloat(price);
-  if (price === '' || isNaN(n) || n < 0) return 'Please enter a valid price.';
-  if (!date) return 'Please choose the date this price starts.';
-  return { price: n, effectiveDate: date, note: note.trim() || undefined };
+  if (price === '') errs.price = 'Enter the price.';
+  else if (isNaN(n) || n < 0) errs.price = 'Enter a price of 0 or more.';
+  if (!date) errs.date = 'Choose the date this price starts.';
+  return errs;
 };
+
+const readPrice = (price: string, date: string, note: string): PriceValues =>
+  ({ price: parseFloat(price), effectiveDate: date, note: note.trim() || undefined });
 
 // Add a new price (or correct an existing one), with a warning for past start dates
 const PriceModal: React.FC<{
@@ -905,7 +922,7 @@ const PriceModal: React.FC<{
   const [price, setPrice] = useState(editing ? String(editing.price) : '');
   const [date, setDate] = useState(editing ? editing.effectiveDate : localToday());
   const [note, setNote] = useState(editing?.note || '');
-  const [error, setError] = useState('');
+  const fe = useFieldErrors();
   const [confirmPast, setConfirmPast] = useState<{ values: PriceValues; count: number } | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -919,9 +936,8 @@ const PriceModal: React.FC<{
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    if (fe.show(priceErrors(price, date))) return;
     const values = readPrice(price, date, note);
-    if (typeof values === 'string') { setError(values); return; }
-    setError('');
     if (values.effectiveDate < localToday()) {
       setConfirmPast({ values, count: ordersAffected(vendorId, values.effectiveDate) });
       return;
@@ -947,7 +963,7 @@ const PriceModal: React.FC<{
 
   return (
     <ModalShell title={editing ? 'Correct a Price' : 'Add a Price'} subtitle={editing ? 'Super Admin only' : 'New price for one supplier'} onClose={onClose}>
-      <form onSubmit={handleSubmit} className="space-y-4 md:space-y-6">
+      <form onSubmit={handleSubmit} noValidate className="space-y-4 md:space-y-6">
         <div>
           <label className={labelCls}>Supplier*</label>
           <select value={vendorId} onChange={e => setVendorId(e.target.value)} disabled={!!editing} className={inputCls}>
@@ -960,8 +976,7 @@ const PriceModal: React.FC<{
             <div className="text-2xl font-black text-slate-900">{current ? `PKR ${current.price.toFixed(2)}` : '--'}</div>
           </div>
         )}
-        <PriceFields price={price} date={date} note={note} setPrice={setPrice} setDate={setDate} setNote={setNote} />
-        {error && <div className="p-3 rounded-xl bg-red-50 text-red-700 text-sm font-bold">{error}</div>}
+        <PriceFields price={price} date={date} note={note} setPrice={setPrice} setDate={setDate} setNote={setNote} fe={fe} />
         {saveError && <div className={errorBoxCls} role="alert">{saveError}</div>}
         <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 md:gap-4 pt-4 border-t border-slate-100">
           <button type="button" onClick={onClose} className={cancelCls}>Cancel</button>
@@ -987,14 +1002,15 @@ const SupplierModal: React.FC<{
   const [date, setDate] = useState(localToday());
   const [note, setNote] = useState('');
   const [makeMain, setMakeMain] = useState(false);
-  const [error, setError] = useState('');
+  const fe = useFieldErrors();
   const [saving, setSaving] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!vendorId) { setError('Please choose a supplier.'); return; }
+    const errs: FieldErrors = noPrice ? {} : priceErrors(price, date);
+    if (!vendorId) errs.vendor = 'Choose a supplier.';
+    if (fe.show(errs)) return;
     const values = noPrice ? null : readPrice(price, date, note);
-    if (typeof values === 'string') { setError(values); return; }
     setSaving(true);
     await onSave(vendorId, values, makeMain);
     setSaving(false);
@@ -1005,21 +1021,21 @@ const SupplierModal: React.FC<{
       {vendors.length === 0 ? (
         <p className="text-sm text-slate-500">Every supplier is already linked to this product.</p>
       ) : (
-        <form onSubmit={handleSubmit} className="space-y-4 md:space-y-6">
+        <form onSubmit={handleSubmit} noValidate className="space-y-4 md:space-y-6">
           <div>
             <label className={labelCls}>Supplier*</label>
-            <select value={vendorId} onChange={e => setVendorId(e.target.value)} className={inputCls} required>
+            <select value={vendorId} onChange={e => setVendorId(e.target.value)} {...fe.field('vendor', inputCls)}>
               <option value="">-- Choose Supplier --</option>
               {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
             </select>
+            <FieldMessage msg={fe.errors.vendor} />
           </div>
-          {!noPrice && <PriceFields price={price} date={date} note={note} setPrice={setPrice} setDate={setDate} setNote={setNote} />}
+          {!noPrice && <PriceFields price={price} date={date} note={note} setPrice={setPrice} setDate={setDate} setNote={setNote} fe={fe} />}
           {canSetMain && (
             <label className="flex items-center gap-2 text-sm font-bold text-slate-600">
               <input type="checkbox" checked={makeMain} onChange={e => setMakeMain(e.target.checked)} /> Make this the main supplier
             </label>
           )}
-          {error && <div className="p-3 rounded-xl bg-red-50 text-red-700 text-sm font-bold">{error}</div>}
           {saveError && <div className={errorBoxCls} role="alert">{saveError}</div>}
           <div className="flex flex-col-reverse sm:flex-row justify-end gap-3 md:gap-4 pt-4 border-t border-slate-100">
             <button type="button" onClick={onClose} className={cancelCls}>Cancel</button>
