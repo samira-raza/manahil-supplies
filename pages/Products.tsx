@@ -11,6 +11,7 @@ import { brandEntries, entryKey, entryText, buildProductTitle, productBrandParts
 import { sortCategories, categoryLabel } from '../services/categories';
 import { useFieldErrors, FieldErrors } from '../services/formErrors';
 import FieldMessage from '../components/FieldMessage';
+import LinkPicker from '../components/LinkPicker';
 
 // The brand picked on the form is one entry: "parentId" (parent alone) or "parentId|setId" (a brand set)
 const splitEntry = (key: string) => { const [parentId, setId] = key.split('|'); return { parentId: parentId || undefined, setId: setId || undefined }; };
@@ -743,12 +744,12 @@ const Products: React.FC = () => {
                         </span>
                       ))}
                     </div>
-                    <select value="" onChange={e => { const v = e.target.value; if (v) setCopyLinks(prev => [...prev, v]); }} className="w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm">
-                      <option value="">+ Add linked product</option>
-                      {products.filter(prod => !prod.isArchived && !copyLinks.includes(prod.id)).map(prod => (
-                        <option key={prod.id} value={prod.id}>{prod.title}</option>
-                      ))}
-                    </select>
+                    <LinkPicker
+                      verb="Add"
+                      candidates={products.filter(prod => !prod.isArchived && !copyLinks.includes(prod.id))}
+                      categories={categories}
+                      onConfirm={ids => { setCopyLinks(prev => [...prev, ...ids.filter(id => !prev.includes(id))]); return ''; }}
+                    />
                   </div>
                 </div>
               </div>
