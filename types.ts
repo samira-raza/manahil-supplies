@@ -94,6 +94,8 @@ export interface User {
   mustResetPassword?: boolean;
   canCreateProducts?: boolean;
   canAddProductSuppliers?: boolean;
+  // D44: an Admin the Super Admin allows to correct (not delete) price entries
+  canCorrectPrices?: boolean;
 }
 
 export interface Buyer {
