@@ -174,6 +174,9 @@ export interface Product {
   description: string;
   unitSize: string;
   packing: string;
+  // D42: capacity of each item that goes into the carton, e.g. 30 ML (optional)
+  itemCapacity?: number;
+  itemCapacityUnit?: string;
 
   suppliers: ProductSupplier[];
   activity: ProductActivity[];

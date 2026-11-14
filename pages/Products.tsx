@@ -7,7 +7,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { db } from '../services/db';
 import { localToday, mainSupplier, activeSuppliers, orderedSuppliers, priceOn, sortPrices, hasSupplier, deliveryLine } from '../services/pricing';
 import { productPermissions } from '../services/permissions';
-import { brandEntries, entryKey, entryText, buildProductTitle, productBrandParts, setChildNames, parentBrands, childBrandsOf } from '../services/brands';
+import { brandEntries, entryKey, entryText, buildProductTitle, contentsPart, productBrandParts, setChildNames, parentBrands, childBrandsOf } from '../services/brands';
 import { sortCategories, categoryLabel } from '../services/categories';
 import { useFieldErrors, FieldErrors } from '../services/formErrors';
 import FieldMessage from '../components/FieldMessage';
@@ -47,6 +47,8 @@ const Products: React.FC = () => {
     unitSize: '',
     measuringUnit: '',
     packing: '',
+    itemCapacity: '',
+    itemCapacityUnit: '',
     relatedProductId: '',
   });
   const [supplierDrafts, setSupplierDrafts] = useState<SupplierDraft[]>([emptySupplierDraft()]);
@@ -71,7 +73,7 @@ const Products: React.FC = () => {
     const { parentId, setId } = splitEntry(formData.brand);
     const parentName = ctx?.brands.find(b => b.id === parentId)?.name || '';
     const childNames = setChildNames(ctx?.brandSets.find(s => s.id === setId), ctx?.brands || []);
-    return buildProductTitle(formData.category, parentName, childNames, formData.itemName, formData.packing);
+    return buildProductTitle(formData.category, parentName, childNames, formData.itemName, contentsPart(formData.itemCapacity, formData.itemCapacityUnit, formData.packing));
   }, [formData, ctx?.brands, ctx?.brandSets]);
 
   useEffect(() => {
@@ -98,6 +100,8 @@ const Products: React.FC = () => {
       unitSize: original.unitSize || '',
       measuringUnit: original.measuringUnit || '',
       packing: original.packing || '',
+      itemCapacity: original.itemCapacity !== undefined ? String(original.itemCapacity) : '',
+      itemCapacityUnit: original.itemCapacityUnit || '',
       relatedProductId: '',
     });
     // Same suppliers (stopped ones are left out) with today's price filled in, no price history.
@@ -169,6 +173,8 @@ const Products: React.FC = () => {
       unitSize: '',
       measuringUnit: '',
       packing: '',
+      itemCapacity: '',
+      itemCapacityUnit: '',
       relatedProductId: '',
     });
     setSupplierDrafts([emptySupplierDraft()]);
@@ -201,7 +207,12 @@ const Products: React.FC = () => {
       const sameName = products.find(p => p.title.trim().toLowerCase() === generatedTitle.trim().toLowerCase());
       if (sameName) errs.itemName = `Another product already has this name: "${sameName.title}". Change the item name, e.g. add "Large".`;
     }
-    if (!formData.unitSize.trim()) errs.unitSize = 'Enter the unit size.';
+    // D42: size is optional; a capacity must be a number above 0 and needs its unit
+    if (formData.itemCapacity.trim() !== '') {
+      const cap = parseFloat(formData.itemCapacity);
+      if (isNaN(cap) || cap <= 0) errs.itemCapacity = 'Enter a capacity above 0, e.g. 30.';
+      else if (!formData.itemCapacityUnit) errs.itemCapacityUnit = 'Choose the unit, e.g. ML.';
+    }
     if (duplicateOf && !whatsDifferent.trim()) errs.whatsDifferent = "Write what's different from the original.";
     const drafts = supplierDrafts.filter(d => d.vendorId);
     if (drafts.length === 0) {
@@ -240,7 +251,9 @@ const Products: React.FC = () => {
         withoutCopyTag(formData.description) !== withoutCopyTag(duplicateOf.description) ||
         formData.unitSize !== (duplicateOf.unitSize || '') ||
         formData.measuringUnit !== (duplicateOf.measuringUnit || '') ||
-        formData.packing !== (duplicateOf.packing || '');
+        formData.packing !== (duplicateOf.packing || '') ||
+        formData.itemCapacity !== (duplicateOf.itemCapacity !== undefined ? String(duplicateOf.itemCapacity) : '') ||
+        formData.itemCapacityUnit !== (duplicateOf.itemCapacityUnit || '');
       const originalVendors = activeSuppliers(duplicateOf).map(s => s.vendorId).sort().join(',');
       const suppliersChanged = drafts.map(d => d.vendorId).sort().join(',') !== originalVendors ||
         mainVendorId !== (mainSupplier(duplicateOf)?.isActive ? mainSupplier(duplicateOf)!.vendorId : '');
@@ -295,6 +308,8 @@ const Products: React.FC = () => {
       unitSize: formData.unitSize,
       measuringUnit: formData.measuringUnit,
       packing: formData.packing,
+      itemCapacity: formData.itemCapacity.trim() !== '' ? parseFloat(formData.itemCapacity) : undefined,
+      itemCapacityUnit: formData.itemCapacity.trim() !== '' ? formData.itemCapacityUnit : undefined,
       suppliers,
       activity: [],
       dateAdded: today,
@@ -352,7 +367,7 @@ const Products: React.FC = () => {
         id: generateId(),
         productId,
         type: 'COPIED_FROM',
-        details: `Copied from "${duplicateOf.title}". Copied over: brand, category, item name, description, size, unit, packing, ` +
+        details: `Copied from "${duplicateOf.title}". Copied over: brand, category, item name, description, size, unit, item capacity, packing, ` +
           `suppliers (${suppliers.map(s => nameOf(s.vendorId)).join(', ')}${main ? `; main: ${nameOf(main.vendorId)}` : ''}), ` +
           `linked products (${copyLinks.length > 0 ? copyLinks.map(titleOf).join(', ') : 'none'})` +
           `${perOrderMode ? ', "price set on each order" setting. No prices (price is typed on each order).' : '. Price history was not copied; prices were entered for the copy.'}` +
@@ -514,7 +529,7 @@ const Products: React.FC = () => {
                     <tr className={`group transition-all ${isExpanded ? 'bg-indigo-50/20' : 'hover:bg-slate-50/80'} ${p.isArchived ? 'opacity-50 grayscale' : ''}`}>
                       <td className="px-4 md:px-8 py-4 md:py-6">
                         <Link to={`/products/${p.id}`} className="block hover:text-indigo-600 transition-colors">
-                          <div className="font-black text-slate-900 leading-tight text-sm md:text-base max-w-[200px] md:max-w-md group-hover:text-indigo-600 truncate md:whitespace-normal">{p.itemName || p.title}{p.packing ? ` - ${p.packing}` : ''}</div>
+                          <div className="font-black text-slate-900 leading-tight text-sm md:text-base max-w-[200px] md:max-w-md group-hover:text-indigo-600 truncate md:whitespace-normal">{p.itemName || p.title}{contentsPart(p.itemCapacity, p.itemCapacityUnit, p.packing) ? ` - ${contentsPart(p.itemCapacity, p.itemCapacityUnit, p.packing)}` : ''}</div>
                         </Link>
                         <div className="flex items-center gap-1 md:gap-2 mt-1 md:mt-2 flex-wrap">
                            {(() => {
@@ -713,9 +728,9 @@ const Products: React.FC = () => {
                     <input name="description" value={formData.description} onChange={handleInputChange} type="text" className="w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm" placeholder="e.g. Heavy duty corrugated box for shipping" />
                   </div>
                   <div>
-                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Unit Size*</label>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Size (L × W × H)</label>
                     <div className="flex gap-2">
-                      <input name="unitSize" value={formData.unitSize} onChange={handleInputChange} type="text" {...fe.field('unitSize', "flex-1 min-w-0 px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm")} placeholder="e.g. 60x40x40" />
+                      <input name="unitSize" value={formData.unitSize} onChange={handleInputChange} type="text" {...fe.field('unitSize', "flex-1 min-w-0 px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm")} placeholder="Optional, e.g. 11 x 11.5 x 13" />
                       <select name="measuringUnit" value={formData.measuringUnit} onChange={handleInputChange} className="w-24 px-3 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm">
                         <option value="">Unit</option>
                         {measuringUnits.map(u => (
@@ -726,8 +741,23 @@ const Products: React.FC = () => {
                     <FieldMessage msg={fe.errors.unitSize} />
                   </div>
                   <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Item capacity</label>
+                    <div className="flex gap-2">
+                      <input name="itemCapacity" value={formData.itemCapacity} onChange={handleInputChange} type="number" step="any" min="0" {...fe.field('itemCapacity', "flex-1 min-w-0 px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm")} placeholder="Optional, e.g. 30" />
+                      <select name="itemCapacityUnit" value={formData.itemCapacityUnit} onChange={handleInputChange} {...fe.field('itemCapacityUnit', "w-24 px-3 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm")}>
+                        <option value="">Unit</option>
+                        {measuringUnits.map(u => (
+                          <option key={u.id} value={u.symbol}>{u.symbol}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <FieldMessage msg={fe.errors.itemCapacity || fe.errors.itemCapacityUnit} />
+                    <p className="text-[11px] text-slate-400 mt-1">The capacity of each item that goes into the carton. Units come from the Units section.</p>
+                  </div>
+                  <div>
                     <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Packing</label>
-                    <input name="packing" value={formData.packing} onChange={handleInputChange} type="text" className="w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm" placeholder="Optional, e.g. Bundle of 50" />
+                    <input name="packing" value={formData.packing} onChange={handleInputChange} type="text" className="w-full px-5 py-4 rounded-2xl bg-slate-50 border-2 border-transparent focus:border-indigo-500 outline-none transition-all font-bold text-sm" placeholder="Optional, e.g. 26 Pcs or 24 Bottles" />
+                    <p className="text-[11px] text-slate-400 mt-1">How many items go into one carton.</p>
                   </div>
                   {/* Linked products (two-way): several can be added. A copy starts with the original and its links. */}
                   <div className="md:col-span-2">
