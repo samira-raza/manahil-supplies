@@ -5,6 +5,8 @@ import { Brand, BrandActivity, BrandSet, Product } from '../types';
 import { Icons } from '../constants';
 import { db } from '../services/db';
 import { notSavedMessage, errorBoxCls } from '../services/errors';
+import { useFieldErrors, FieldErrors } from '../services/formErrors';
+import FieldMessage from '../components/FieldMessage';
 import {
   parentBrands, childBrandsOf, setsOf, setText, setChildNames, productTitleFor,
   defaultInitials, suggestInitials, validInitials, brandPermissions,
@@ -446,6 +448,7 @@ const ParentDialog: React.FC<{ brand?: Brand; parents: Brand[]; onClose: () => v
   const [initials, setInitials] = useState(brand?.initials || '');
   const [initialsEdited, setInitialsEdited] = useState(!!brand);
   const [error, setError] = useState('');
+  const fe = useFieldErrors();
   const others = parents.filter(p => p.id !== brand?.id);
   const taken = others.map(p => p.initials || '');
   const holder = others.find(p => p.initials === initials);
@@ -459,12 +462,15 @@ const ParentDialog: React.FC<{ brand?: Brand; parents: Brand[]; onClose: () => v
 
   const save = async () => {
     setError('');
-    if (!name.trim()) return setError('Please enter the brand name.');
-    if (nameClash) return setError(`A parent brand called "${nameClash.name}" already exists.`);
+    // D39: outline each field that blocks saving and move the cursor to the first
+    const errs: FieldErrors = {};
+    if (!name.trim()) errs.name = 'Enter the brand name.';
+    else if (nameClash) errs.name = `A parent brand called "${nameClash.name}" already exists.`;
     if (!brand) {
-      if (!validInitials(initials)) return setError('Initials must be 2 or 3 capital letters.');
-      if (holder) return setError(`Initials ${initials} are already used by ${holder.name}.`);
+      if (!validInitials(initials)) errs.initials = 'Initials must be 2 or 3 capital letters.';
+      else if (holder) errs.initials = `Initials ${initials} are already used by ${holder.name}.`;
     }
+    if (fe.show(errs)) return;
     const failed = await onSave({ name: name.trim(), initials, label: label.trim() });
     if (failed) setError(failed);
   };
@@ -476,14 +482,16 @@ const ParentDialog: React.FC<{ brand?: Brand; parents: Brand[]; onClose: () => v
     <Modal title={brand ? 'Edit Parent Brand' : 'Add Parent Brand'} subtitle={brand ? 'Spelling fixes update every product using it' : 'e.g. Bodyworks Charcoal'} onClose={onClose}>
       <div>
         <label className={labelCls}>Parent brand name*</label>
-        <input className={inputCls} value={name} onChange={e => onName(e.target.value)} placeholder="e.g. Bodyworks Charcoal" autoFocus />
+        <input {...fe.field('name', inputCls)} value={name} onChange={e => onName(e.target.value)} placeholder="e.g. Bodyworks Charcoal" autoFocus />
+        <FieldMessage msg={fe.errors.name} />
       </div>
       {!brand && (
         <div>
           <label className={labelCls}>Initials* (2 or 3 capital letters, used in product codes)</label>
-          <input className={inputCls} value={initials} maxLength={3} onChange={e => { setInitialsEdited(true); setInitials(e.target.value.toUpperCase().replace(/[^A-Z]/g, '')); }} placeholder="e.g. BL" />
+          <input {...fe.field('initials', inputCls)} value={initials} maxLength={3} onChange={e => { setInitialsEdited(true); setInitials(e.target.value.toUpperCase().replace(/[^A-Z]/g, '')); }} placeholder="e.g. BL" />
+          {fe.errors.initials && <FieldMessage msg={fe.errors.initials} />}
           {usualHolder && <p className="text-xs text-amber-700 font-bold mt-1">{usual} is already used by {usualHolder.name}. {initials && !holder ? `Suggested: ${initials}.` : ''}</p>}
-          {holder && <p className="text-xs text-red-600 font-bold mt-1">{initials} is already used by {holder.name}.</p>}
+          {holder && !fe.errors.initials && <p className="text-xs text-red-600 font-bold mt-1">{initials} is already used by {holder.name}.</p>}
           <p className="text-[11px] text-slate-400 mt-1">You can change them now. After saving, only the Super Admin can change them.</p>
         </div>
       )}
@@ -501,20 +509,24 @@ const ParentDialog: React.FC<{ brand?: Brand; parents: Brand[]; onClose: () => v
 const InitialsDialog: React.FC<{ brand: Brand; parents: Brand[]; onClose: () => void; onSave: (initials: string) => Promise<string> }> = ({ brand, parents, onClose, onSave }) => {
   const [initials, setInitials] = useState(brand.initials || '');
   const [error, setError] = useState('');
+  const fe = useFieldErrors();
   const holder = parents.find(p => p.id !== brand.id && p.initials === initials);
   const save = async () => {
     setError('');
-    if (!validInitials(initials)) return setError('Initials must be 2 or 3 capital letters.');
-    if (holder) return setError(`${initials} is already used by ${holder.name}.`);
-    if (initials === brand.initials) return setError('These are the current initials.');
+    // D39: outline the field that blocks saving
+    const msg = !validInitials(initials) ? 'Initials must be 2 or 3 capital letters.'
+      : holder ? `${initials} is already used by ${holder.name}.`
+      : initials === brand.initials ? 'These are the current initials. Type new ones.' : '';
+    if (fe.show(msg ? { initials: msg } : {})) return;
     const failed = await onSave(initials);
     if (failed) setError(failed);
   };
   return (
     <Modal title="Change Initials" subtitle={brand.name} onClose={onClose}>
       <p className="text-sm text-slate-600">Existing products and orders keep the old initials. New products use the new ones. The change is recorded.</p>
-      <input className={inputCls} value={initials} maxLength={3} onChange={e => setInitials(e.target.value.toUpperCase().replace(/[^A-Z]/g, ''))} />
-      {holder && <p className="text-xs text-red-600 font-bold">{initials} is already used by {holder.name}.</p>}
+      <input {...fe.field('initials', inputCls)} value={initials} maxLength={3} onChange={e => setInitials(e.target.value.toUpperCase().replace(/[^A-Z]/g, ''))} />
+      <FieldMessage msg={fe.errors.initials} />
+      {holder && !fe.errors.initials && <p className="text-xs text-red-600 font-bold">{initials} is already used by {holder.name}.</p>}
       {error && <div className={errorBoxCls} role="alert">{error}</div>}
       <ConfirmButtons label="Change initials" onCancel={onClose} onConfirm={save} />
     </Modal>
@@ -524,13 +536,16 @@ const InitialsDialog: React.FC<{ brand: Brand; parents: Brand[]; onClose: () => 
 const ChildDialog: React.FC<{ parent: Brand; brand?: Brand; brands: Brand[]; onClose: () => void; onSave: (name: string) => Promise<string> }> = ({ parent, brand, brands, onClose, onSave }) => {
   const [name, setName] = useState(brand?.name || '');
   const [error, setError] = useState('');
+  const fe = useFieldErrors();
   // A child brand name exists under one parent only
   const clash = brands.find(b => b.parentId && b.id !== brand?.id && same(b.name, name));
   const clashParent = clash ? brands.find(b => b.id === clash.parentId)?.name : '';
   const save = async () => {
     setError('');
-    if (!name.trim()) return setError('Please enter the child brand name.');
-    if (clash) return setError(`"${clash.name}" already exists under ${clashParent}. A child brand can belong to one parent only.`);
+    // D39: outline the field that blocks saving
+    const msg = !name.trim() ? 'Enter the child brand name.'
+      : clash ? `"${clash.name}" already exists under ${clashParent}. A child brand can belong to one parent only.` : '';
+    if (fe.show(msg ? { name: msg } : {})) return;
     const failed = await onSave(name.trim());
     if (failed) setError(failed);
   };
@@ -538,8 +553,9 @@ const ChildDialog: React.FC<{ parent: Brand; brand?: Brand; brands: Brand[]; onC
     <Modal title={brand ? 'Rename Child Brand' : 'Add Child Brand'} subtitle={`Under ${parent.name}`} onClose={onClose}>
       <div>
         <label className={labelCls}>Child brand name*</label>
-        <input className={inputCls} value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Smoky Rose" autoFocus />
-        {clash && <p className="text-xs text-red-600 font-bold mt-1">Already exists under {clashParent}.</p>}
+        <input {...fe.field('name', inputCls)} value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Smoky Rose" autoFocus />
+        <FieldMessage msg={fe.errors.name} />
+        {clash && !fe.errors.name && <p className="text-xs text-red-600 font-bold mt-1">Already exists under {clashParent}.</p>}
         {brand && <p className="text-[11px] text-slate-400 mt-1">Every product using it gets its name updated.</p>}
       </div>
       {error && <div className={errorBoxCls} role="alert">{error}</div>}
@@ -573,19 +589,21 @@ const SetDialog: React.FC<{ parent: Brand; children: Brand[]; existing: BrandSet
   ({ parent, children, existing, brands, onClose, onSave }) => {
   const [picked, setPicked] = useState<string[]>([]);
   const [error, setError] = useState('');
+  const fe = useFieldErrors();
   const key = (ids: string[]) => [...ids].sort().join(',');
   const duplicate = existing.find(s => key(s.childIds) === key(picked));
   const preview = `${parent.name} [${setChildNames({ id: '', parentId: parent.id, childIds: picked, isActive: true }, brands).join(', ')}]`;
   const save = async () => {
     setError('');
-    if (picked.length === 0) return setError('Tick at least one child brand.');
-    if (duplicate) return setError('This brand set already exists.');
+    // D39: outline the tick list when it blocks saving
+    const msg = picked.length === 0 ? 'Tick at least one child brand.' : duplicate ? 'This brand set already exists. Tick a different mix.' : '';
+    if (fe.show(msg ? { children: msg } : {})) return;
     const failed = await onSave(picked);
     if (failed) setError(failed);
   };
   return (
     <Modal title="Add Brand Set" subtitle="Fixed once saved. Different child brands means a new set." onClose={onClose}>
-      <div className="space-y-2">
+      <div tabIndex={-1} {...fe.field('children', 'space-y-2 p-2 rounded-xl border-2 border-transparent outline-none')} onChange={() => fe.clear('children')}>
         {children.map(c => (
           <label key={c.id} className="flex items-center gap-2 text-sm font-bold text-slate-700">
             <input type="checkbox" checked={picked.includes(c.id)} onChange={e => setPicked(prev => e.target.checked ? [...prev, c.id] : prev.filter(x => x !== c.id))} />
@@ -593,8 +611,9 @@ const SetDialog: React.FC<{ parent: Brand; children: Brand[]; existing: BrandSet
           </label>
         ))}
       </div>
+      <FieldMessage msg={fe.errors.children} />
       {picked.length > 0 && <div className="p-3 rounded-xl bg-indigo-50 text-indigo-800 text-sm font-bold">{preview}</div>}
-      {duplicate && <p className="text-xs text-red-600 font-bold">This brand set already exists.</p>}
+      {duplicate && !fe.errors.children && <p className="text-xs text-red-600 font-bold">This brand set already exists.</p>}
       {error && <div className={errorBoxCls} role="alert">{error}</div>}
       <ConfirmButtons label="Save brand set" onCancel={onClose} onConfirm={save} />
     </Modal>
